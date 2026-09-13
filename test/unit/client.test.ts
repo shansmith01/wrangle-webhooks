@@ -4,6 +4,7 @@ import { DevRouterClient } from "../../src/client";
 describe("DevRouterClient", () => {
   afterEach(() => {
     vi.unstubAllGlobals();
+    vi.unstubAllEnvs();
     vi.restoreAllMocks();
   });
 
@@ -54,5 +55,63 @@ describe("DevRouterClient", () => {
     expect(fetchMock).toHaveBeenCalledTimes(2);
     expect(String(fetchMock.mock.calls[1][0])).toContain("subscribers/sub_abc123");
     expect(fetchMock.mock.calls[1][1]?.method).toBe("DELETE");
+  });
+
+  it("detects the environment public URL when targetBaseUrl is omitted", async () => {
+    vi.stubEnv("CODESPACE_NAME", "lucky-space-abc123");
+    vi.stubEnv("GITHUB_CODESPACES_PORT_FORWARDING_DOMAIN", "app.github.dev");
+
+    const fetchMock = vi.fn(async (_input: string | URL | Request, init?: RequestInit) => {
+      if (init?.method === "POST") {
+        return Response.json({
+          subscriberId: "sub_abc123",
+          routeId: "my-web-app",
+          expiresIn: 300
+        });
+      }
+      return new Response(null, { status: 204 });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const client = new DevRouterClient({
+      routerUrl: "https://dev-webhooks.example.com",
+      secret: "test-secret"
+    });
+    const connection = await client.connect({ routeId: "my-web-app" });
+    expect(connection.targetBaseUrl).toBe(
+      "https://lucky-space-abc123-3000.app.github.dev"
+    );
+    const body = String(fetchMock.mock.calls[0][1]?.body);
+    expect(body).toContain("https://lucky-space-abc123-3000.app.github.dev");
+    await connection.disconnect();
+  });
+
+  it("registers at the router root when routeId is omitted", async () => {
+    const fetchMock = vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
+      if (init?.method === "POST") {
+        return Response.json({
+          subscriberId: "sub_abc123",
+          routeId: "",
+          expiresIn: 300
+        });
+      }
+      return new Response(null, { status: 204 });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const client = new DevRouterClient({
+      routerUrl: "https://dev-webhooks.example.com",
+      secret: "test-secret"
+    });
+    const connection = await client.connect({
+      targetBaseUrl: "https://abc123.cloud-dev.example"
+    });
+
+    expect(connection.routeId).toBe("");
+    expect(connection.publicUrl).toBe("https://dev-webhooks.example.com/*");
+    expect(String(fetchMock.mock.calls[0][0])).toBe(
+      "https://dev-webhooks.example.com/_router/subscribers"
+    );
+    await connection.disconnect();
   });
 });

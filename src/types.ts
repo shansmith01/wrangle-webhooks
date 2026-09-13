@@ -18,8 +18,9 @@ export interface DevRouterClientOptions {
 }
 
 export interface ConnectOptions {
-  routeId: string;
-  targetBaseUrl: string;
+  routeId?: string;
+  targetBaseUrl?: string;
+  port?: number;
 }
 
 export interface Connection {

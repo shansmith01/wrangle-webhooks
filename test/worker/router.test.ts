@@ -44,14 +44,15 @@ async function register(
   routeId: string,
   targetBaseUrl: string
 ): Promise<{ subscriberId: string }> {
-  const response = await fetchWorker(
-    `https://dev-webhooks.example.com/_router/routes/${routeId}/subscribers`,
-    {
-      method: "POST",
-      headers: authHeaders({ "Content-Type": "application/json" }),
-      body: JSON.stringify({ targetBaseUrl })
-    }
-  );
+  const path =
+    routeId === ""
+      ? "https://dev-webhooks.example.com/_router/subscribers"
+      : `https://dev-webhooks.example.com/_router/routes/${routeId}/subscribers`;
+  const response = await fetchWorker(path, {
+    method: "POST",
+    headers: authHeaders({ "Content-Type": "application/json" }),
+    body: JSON.stringify({ targetBaseUrl })
+  });
   expect(response.status).toBe(200);
   return (await response.json()) as { subscriberId: string };
 }
@@ -145,5 +146,19 @@ describe("public routing", () => {
     );
     expect(response.status).toBe(404);
     expect(await response.json()).toEqual({ error: "not_found" });
+  });
+
+  it("forwards the full path when the route id is empty", async () => {
+    await register("", "https://dev-root.example");
+
+    fetchMock
+      .get("https://dev-root.example")
+      .intercept({ path: /\/oauth\/callback/, method: "GET" })
+      .reply(200, "ok");
+
+    const response = await fetchWorker(
+      "https://dev-webhooks.example.com/oauth/callback?code=123"
+    );
+    expect(response.status).toBe(202);
   });
 });

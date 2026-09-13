@@ -48,8 +48,39 @@ export function validateTargetBaseUrl(value: string): string {
   return url.toString();
 }
 
+const DEFAULT_ROUTE_OBJECT_NAME = "dev-router:default";
+
 export function isValidRouteId(routeId: string): boolean {
   return routeId.length > 0 && routeId !== "_router" && /^[A-Za-z0-9._~-]+$/.test(routeId);
+}
+
+export function isAllowedRouteId(routeId: string): boolean {
+  return routeId === "" || isValidRouteId(routeId);
+}
+
+export function durableObjectNameForRoute(routeId: string): string {
+  return routeId === "" ? DEFAULT_ROUTE_OBJECT_NAME : routeId;
+}
+
+export function managementSubscriberPath(
+  routeId: string,
+  subscriberId?: string,
+  suffix?: string
+): string {
+  const base =
+    routeId === ""
+      ? "/_router/subscribers"
+      : `/_router/routes/${encodeURIComponent(routeId)}/subscribers`;
+  if (!subscriberId) {
+    return base;
+  }
+  const subscriberPath = `${base}/${encodeURIComponent(subscriberId)}`;
+  return suffix ? `${subscriberPath}/${suffix}` : subscriberPath;
+}
+
+export function publicIngressUrl(routerUrl: string, routeId: string): string {
+  const base = routerUrl.replace(/\/+$/, "");
+  return routeId === "" ? `${base}/*` : `${base}/${routeId}/*`;
 }
 
 export function joinTargetUrl(
@@ -67,6 +98,9 @@ export function joinTargetUrl(
 }
 
 export function remainingPathFromPublicUrl(pathname: string, routeId: string): string {
+  if (routeId === "") {
+    return pathname || "/";
+  }
   const prefix = `/${routeId}`;
   if (pathname === prefix) {
     return "";

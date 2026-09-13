@@ -6,7 +6,7 @@ Shared Cloudflare ingress for ephemeral cloud development environments. Deploy t
 External service
       |
       v
-https://dev-webhooks.example.com/<routeId>/<any-path>
+https://dev-webhooks.example.com[/<routeId>]/<any-path>
       |
       v
 Shared Cloudflare Worker + Durable Object
@@ -15,7 +15,14 @@ Shared Cloudflare Worker + Durable Object
       +--> Dev Environment B
 ```
 
-The router is generic. It does not distinguish webhooks, OAuth callbacks, or any other HTTP request. Everything after `routeId` is forwarded as-is.
+The router is generic. It does not distinguish webhooks, OAuth callbacks, or any other HTTP request.
+
+`routeId` is an optional public path prefix, not a private identifier:
+
+- omitted / empty → `https://dev-webhooks.example.com/oauth/callback`
+- `my-web-app` → `https://dev-webhooks.example.com/my-web-app/oauth/callback`
+
+If a named route has active subscribers, it wins for that prefix. Otherwise an empty-route subscriber receives the full path.
 
 ## Architecture
 
@@ -46,18 +53,19 @@ npm install -D @wrangle/dev-router
 ```bash
 export DEV_ROUTER_URL=https://dev-webhooks.example.com
 export DEV_ROUTER_SECRET=<secret>
-export DEV_ROUTER_ROUTE=my-web-app
-export PUBLIC_DEV_URL=https://abc123.cloud-dev.example
 
 npx dev-router connect
 ```
 
-Optional flags:
+That publishes the environment at the router root (`https://dev-webhooks.example.com/*`). Pass `--route my-web-app` or `DEV_ROUTER_ROUTE` only when you want a project prefix.
+
+`connect` detects the current cloud environment's public URL (GitHub Codespaces, VS Code tunnels, Gitpod, and similar). It uses `DEV_ROUTER_PORT` or `PORT` when the platform URL includes a port, and defaults to `3000`.
+
+Override only when detection is wrong:
 
 ```bash
-npx dev-router connect \
-  --route my-web-app \
-  --target https://abc123.cloud-dev.example
+npx dev-router connect --port 5173
+npx dev-router connect --target https://abc123.cloud-dev.example
 ```
 
 Treat the client as a sidecar, not application runtime:
@@ -80,25 +88,36 @@ const client = new DevRouterClient({
   secret: process.env.DEV_ROUTER_SECRET!
 });
 
-const connection = await client.connect({
-  routeId: "my-web-app",
-  targetBaseUrl: process.env.PUBLIC_DEV_URL!
-});
+const connection = await client.connect();
 
 await connection.disconnect();
 ```
 
-`targetBaseUrl` must be `https://`, absolute, and must not include credentials. A base path is allowed (`https://host/dev-ingress`).
+`routeId` is optional. Omit it (or pass `""`) for root ingress with no project prefix.
+
+`targetBaseUrl` is optional. When omitted, the client detects the environment's public `https://` origin. Explicit values must be absolute HTTPS URLs without credentials. A base path is allowed (`https://host/dev-ingress`).
 
 ## Request contract
 
-Incoming:
+Incoming with a route prefix:
 
 ```text
 POST https://dev-webhooks.example.com/project-a/api/hooks/payment?id=123
 ```
 
-Forwarded to each active subscriber:
+Forwarded:
+
+```text
+POST https://dev-a.example/api/hooks/payment?id=123
+```
+
+Incoming with an empty route:
+
+```text
+POST https://dev-webhooks.example.com/api/hooks/payment?id=123
+```
+
+Forwarded:
 
 ```text
 POST https://dev-a.example/api/hooks/payment?id=123

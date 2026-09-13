@@ -1,6 +1,9 @@
 import { describe, expect, it } from "vitest";
 import {
+  isAllowedRouteId,
   isValidRouteId,
+  managementSubscriberPath,
+  publicIngressUrl,
   joinTargetUrl,
   remainingPathFromPublicUrl,
   shouldForwardHeader,
@@ -64,14 +67,39 @@ describe("remainingPathFromPublicUrl", () => {
     );
   });
 
-  it("treats a bare route as an empty remaining path", () => {
-    expect(remainingPathFromPublicUrl("/project-a", "project-a")).toBe("");
+  it("keeps the full path when the route id is empty", () => {
+    expect(remainingPathFromPublicUrl("/oauth/callback", "")).toBe("/oauth/callback");
   });
 });
 
 describe("isValidRouteId", () => {
   it("rejects the reserved management namespace", () => {
     expect(isValidRouteId("_router")).toBe(false);
+  });
+
+  it("allows an empty route id as a root catch-all", () => {
+    expect(isValidRouteId("")).toBe(false);
+    expect(isAllowedRouteId("")).toBe(true);
+  });
+});
+
+describe("publicIngressUrl", () => {
+  it("omits a prefix when the route id is empty", () => {
+    expect(publicIngressUrl("https://dev-webhooks.example.com", "")).toBe(
+      "https://dev-webhooks.example.com/*"
+    );
+    expect(publicIngressUrl("https://dev-webhooks.example.com", "project-a")).toBe(
+      "https://dev-webhooks.example.com/project-a/*"
+    );
+  });
+});
+
+describe("managementSubscriberPath", () => {
+  it("uses the root management namespace when the route id is empty", () => {
+    expect(managementSubscriberPath("")).toBe("/_router/subscribers");
+    expect(managementSubscriberPath("", "sub_abc", "heartbeat")).toBe(
+      "/_router/subscribers/sub_abc/heartbeat"
+    );
   });
 });
 

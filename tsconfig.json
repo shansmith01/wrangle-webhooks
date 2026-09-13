@@ -10,5 +10,5 @@
     "verbatimModuleSyntax": true,
     "types": ["node"]
   },
-  "include": ["src/client.ts", "src/cli.ts", "src/types.ts", "src/shared.ts", "test/unit/**/*.ts"]
+  "include": ["src/client.ts", "src/cli.ts", "src/types.ts", "src/shared.ts", "src/detect-url.ts", "test/unit/**/*.ts"]
 }
