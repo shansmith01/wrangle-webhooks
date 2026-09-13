@@ -14,7 +14,7 @@ library:
 domains:
   - name: Client connection
     slug: client-connection
-    description: Registering a cloud environment so public HTTP reaches the local app
+    description: Registering a remote cloud environment so public HTTP reaches its https origin
   - name: Shared Worker operations
     slug: worker-operations
     description: Deploying and operating the single shared ingress Worker
@@ -26,7 +26,7 @@ skills:
   - name: connect
     slug: connect
     domain: client-connection
-    description: Connect a cloud environment with the CLI or DevRouterClient
+    description: Connect a remote cloud environment with the CLI or DevRouterClient
     type: core
     covers:
       - DevRouterClient
@@ -35,7 +35,8 @@ skills:
       - validateTargetBaseUrl
       - routeId
     tasks:
-      - Install the GitHub package and run the sidecar
+      - Install @wrangle/dev-router and run the sidecar
+      - Expose a Cloudflare-reachable HTTPS origin in remote clouds
       - Override detected public URLs
       - Connect programmatically and disconnect on shutdown
     failure_modes:
@@ -50,12 +51,12 @@ skills:
         status: active
         version_context: '0.1.0'
         skills: ['connect']
-      - mistake: Pass http or credentialed target URLs
-        mechanism: validateTargetBaseUrl requires absolute https without credentials or fragments.
+      - mistake: Pass localhost, http, or IDE-only port-forward targets
+        mechanism: validateTargetBaseUrl requires absolute https without credentials or fragments. The Worker fetch()es the target from Cloudflare.
         wrong_pattern: |
           await client.connect({ targetBaseUrl: "http://localhost:3000" });
         correct_pattern: |
-          await client.connect({ targetBaseUrl: "https://abc123.cloud-dev.example" });
+          await client.connect({ targetBaseUrl: "https://abc123.trycloudflare.com" });
         source: src/shared.ts
         priority: HIGH
         status: active
@@ -66,7 +67,7 @@ skills:
         wrong_pattern: |
           npx dev-router connect
         correct_pattern: |
-          npm install -D github:shansmith01/wrangle-webhooks
+          npm install -D @wrangle/dev-router
           npx dev-router connect
         source: skills/connect/connect.md
         priority: HIGH
@@ -156,6 +157,17 @@ skills:
         status: active
         version_context: '0.1.0'
         skills: ['forwarding']
+      - mistake: Point providers at the tunnel URL instead of the router
+        mechanism: Public callers hit the Worker; Cloudflare fetch()es targetBaseUrl. Unreachable targets still yield 202 to the provider.
+        wrong_pattern: |
+          // register https://127.0.0.1:3000/oauth/callback with the provider
+        correct_pattern: |
+          // provider URL is https://dev-webhooks.example.com/my-web-app/oauth/callback
+        source: src/worker.ts
+        priority: HIGH
+        status: active
+        version_context: '0.1.0'
+        skills: ['forwarding', 'connect']
       - mistake: Follow redirects at the router hop
         mechanism: deliverToSubscriber sets redirect manual and a 10s timeout.
         wrong_pattern: |
@@ -185,5 +197,5 @@ cross_references:
 gaps:
   - skill: connect
     question: Public npm package name once the registry publish exists
-    context: Current install path is GitHub; npx lookup guidance will change
-    status: open
+    context: Install path is npm @wrangle/dev-router; unscoped npx dev-router still looks up a different package
+    status: closed

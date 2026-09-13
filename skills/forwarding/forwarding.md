@@ -2,6 +2,8 @@
 
 The router is generic. It does not distinguish webhooks, OAuth callbacks, or any other HTTP request.
 
+Give external providers the **router** URL (`Public:` from `dev-router connect`). The Worker then `fetch()`es each subscriber’s `targetBaseUrl`. That origin must be public `https://` reachable from Cloudflare. A URL that only works in an IDE preview or as `localhost` on a laptop will not receive deliveries.
+
 `routeId` is an optional public path prefix, not a private identifier:
 
 - omitted / empty → `https://dev-webhooks.example.com/oauth/callback`

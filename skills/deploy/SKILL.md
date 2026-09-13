@@ -2,9 +2,10 @@
 name: deploy
 description: >
   Use when deploying or configuring the shared @wrangle/dev-router Cloudflare
-  Worker: wrangler deploy, wrangler types, DEV_ROUTER_SECRET, .dev.vars,
-  durable object bindings ROUTE and ROUTER_INDEX, /dashboard, or local
-  wrangler dev. Do not load this for client connect or request-forwarding
+  Worker from this repository: wrangler deploy, wrangler types,
+  DEV_ROUTER_SECRET, .dev.vars, durable object bindings ROUTE and ROUTER_INDEX,
+  /dashboard, custom hostnames, or local wrangler dev. The npm package is the
+  client only. Do not load this for client connect or request-forwarding
   behavior.
 metadata:
   purpose: Guidance for deploying and operating the shared ingress Worker.
@@ -20,7 +21,7 @@ sources:
 
 # Deploy the shared router
 
-Deploy one Worker. Point every client at that origin with `DEV_ROUTER_URL`.
+Deploy one Worker from this repository. Point every client at that origin with `DEV_ROUTER_URL`. The published npm package does not include a deploy step.
 
 ## Setup
 
@@ -32,7 +33,7 @@ npx wrangler deploy
 npx wrangler secret put DEV_ROUTER_SECRET
 ```
 
-Bind a hostname such as `dev-webhooks.example.com` in the Cloudflare dashboard. Management routes under `/_router/*` require `Authorization: Bearer <secret>`.
+Bind a hostname such as `dev-webhooks.example.com` in the Cloudflare dashboard. Management routes under `/_router/*` require `Authorization: Bearer <secret>`. Remote environments must reach this origin (register/heartbeat). The Worker must reach each subscriber’s public `https://` target.
 
 ## Core Patterns
 
@@ -64,7 +65,7 @@ Wrong:
 { "vars": { "DEV_ROUTER_SECRET": "super-secret" } }
 ```
 
-Correct: `npx wrangler secret put DEV_ROUTER_SECRET` in production; `.dev.vars` locally (gitignored).
+Correct: `npx wrangler secret put DEV_ROUTER_SECRET` in production; `.dev.vars` locally (gitignored). Clients get the same value as `DEV_ROUTER_SECRET`.
 
 Source: `skills/deploy/deploy.md`, `.gitignore`
 
@@ -86,4 +87,4 @@ Source: `src/worker.ts`, `src/auth.ts`
 
 ## Completion
 
-`wrangler deploy` succeeds, `DEV_ROUTER_SECRET` is set, and `GET https://<host>/dashboard` renders. Clients can then `connect`. Load `connect` for subscriber registration.
+`wrangler deploy` succeeds, `DEV_ROUTER_SECRET` is set, and `GET https://<host>/dashboard` renders. Clients can then `connect`. Load `connect` for subscriber registration in remote cloud environments.

@@ -4,7 +4,7 @@ Shared Cloudflare ingress for ephemeral cloud development environments. One Work
 
 ## Coverage and batch history
 
-- **2026-09-14 / 0.1.0** — Initial batch for connect, deploy, and forwarding. Source: README plus `src/cli.ts`, `src/client.ts`, `src/worker.ts`, `src/forward.ts`, `src/shared.ts`, `wrangler.jsonc`. Skill files live beside their source docs under `skills/<task>/`. Checks: existing Vitest unit/worker tests for CLI, client, URL detection, and forwarding helpers; `intent validate`. Fresh-consumer Intent session not run (unverified). Remaining: registry publish name; optional dashboard skill.
+- **2026-09-14 / 0.1.0** — Initial batch for connect, deploy, and forwarding. Source: README plus `src/cli.ts`, `src/client.ts`, `src/worker.ts`, `src/forward.ts`, `src/shared.ts`, `wrangler.jsonc`. Skill files live beside their source docs under `skills/<task>/`. Checks: existing Vitest unit/worker tests for CLI, client, URL detection, and forwarding helpers; `intent validate`. Fresh-consumer Intent session not run (unverified). Public docs use npm `@wrangle/dev-router`; connect covers remote cloud environments (Codespaces, Cloud Agents, tunnels). Optional dashboard skill still remaining.
 
 ## Domains
 
@@ -18,9 +18,9 @@ Shared Cloudflare ingress for ephemeral cloud development environments. One Work
 
 | Skill | Type | Domain | What it covers | Failure modes |
 | --- | --- | --- | --- | --- |
-| connect | core | client-connection | CLI, DevRouterClient, detection, HTTPS targets | 3 |
+| connect | core | client-connection | CLI, DevRouterClient, detection, HTTPS targets, remote clouds | 3 |
 | deploy | lifecycle | worker-operations | wrangler deploy, secrets, types, dashboard | 3 |
-| forwarding | core | ingress-contract | 202, headers, fan-out, route prefixes | 3 |
+| forwarding | core | ingress-contract | 202, headers, fan-out, route prefixes, public targets | 4 |
 
 ## Failure Mode Inventory
 
@@ -29,8 +29,8 @@ Shared Cloudflare ingress for ephemeral cloud development environments. One Work
 | # | Mistake | Priority | Source | Cross-skill? |
 | --- | --- | --- | --- | --- |
 | 1 | Treat client as request runtime | HIGH | skills/connect/connect.md | — |
-| 2 | Pass http or credentialed target URLs | HIGH | src/shared.ts | — |
-| 3 | npx public package name without install | HIGH | skills/connect/connect.md | — |
+| 2 | Pass localhost, http, or IDE-only port-forward targets | HIGH | src/shared.ts | — |
+| 3 | npx public package name `dev-router` without install | HIGH | skills/connect/connect.md | — |
 
 ### deploy (3 failure modes)
 
@@ -40,13 +40,14 @@ Shared Cloudflare ingress for ephemeral cloud development environments. One Work
 | 2 | Hand-write Env after binding changes | HIGH | wrangler.jsonc | — |
 | 3 | Treat /dashboard as bearer-gated | HIGH | src/worker.ts | — |
 
-### forwarding (3 failure modes)
+### forwarding (4 failure modes)
 
 | # | Mistake | Priority | Source | Cross-skill? |
 | --- | --- | --- | --- | --- |
 | 1 | Expect subscriber status on the public response | HIGH | src/worker.ts | — |
 | 2 | Treat routeId as a secret | HIGH | skills/forwarding/forwarding.md | connect |
-| 3 | Follow redirects at the router hop | MEDIUM | src/forward.ts | — |
+| 3 | Point providers at the tunnel URL instead of the router | HIGH | src/worker.ts | connect |
+| 4 | Follow redirects at the router hop | MEDIUM | src/forward.ts | — |
 
 ## Tensions
 
@@ -73,7 +74,7 @@ Shared Cloudflare ingress for ephemeral cloud development environments. One Work
 
 | Skill | Question | Status |
 | --- | --- | --- |
-| connect | Public npm name after registry publish | open |
+| connect | Public npm name after registry publish | closed — install `@wrangle/dev-router` |
 
 ## Recommended Skill File Structure
 

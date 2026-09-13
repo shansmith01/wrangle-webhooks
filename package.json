@@ -1,7 +1,7 @@
 {
   "name": "@wrangle/dev-router",
   "version": "0.1.0",
-  "description": "Shared Cloudflare ingress router client for cloud development environments",
+  "description": "Sidecar client for a shared Cloudflare ingress Worker: stable public URLs for ephemeral cloud development environments",
   "type": "module",
   "main": "./dist/client.js",
   "types": "./dist/client.d.ts",
@@ -58,6 +58,12 @@
     "wrangler": "^4.37.1"
   },
   "keywords": [
+    "cloudflare",
+    "workers",
+    "webhooks",
+    "oauth",
+    "dev-router",
+    "codespaces",
     "tanstack-intent"
   ]
 }

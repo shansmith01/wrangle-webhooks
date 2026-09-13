@@ -3,8 +3,9 @@ name: forwarding
 description: >
   Use when implementing the app that receives @wrangle/dev-router traffic, or
   when explaining public URLs, routeId prefixes, 202 Accepted, header
-  stripping, X-Dev-Router-* headers, fan-out, 10s delivery timeout, or
-  route_not_found. Do not load this to install the sidecar or deploy the
+  stripping, X-Dev-Router-* headers, fan-out, 10s delivery timeout,
+  route_not_found, or why the subscriber origin must be public https reachable
+  from Cloudflare. Do not load this to install the sidecar or deploy the
   Worker.
 metadata:
   purpose: Guidance for the public ingress path and what subscribers actually receive.
@@ -20,7 +21,7 @@ sources:
 
 # Request forwarding contract
 
-The Worker is a generic HTTP fan-out. It does not special-case webhooks or OAuth.
+The Worker is a generic HTTP fan-out. It does not special-case webhooks or OAuth. External services call the Worker; Cloudflare `fetch()`es each subscriber. The subscriber origin must be public `https://`, not an IDE-only port-forward.
 
 ## Setup
 
@@ -75,6 +76,14 @@ Wrong: using an unguessable `routeId` as authentication.
 Correct: `routeId` is a public path prefix. Management auth is the bearer secret. Forwarded requests include `X-Dev-Router-Secret` as an internal hop credential — validate that on the subscriber if you need to reject non-router traffic.
 
 Source: `skills/forwarding/forwarding.md`, `src/forward.ts`
+
+### HIGH Pointing providers at the tunnel URL instead of the router
+
+Wrong: registering `https://random.trycloudflare.com/oauth/callback` with the OAuth app (unstable) or expecting deliveries to `http://127.0.0.1:3000`.
+
+Correct: providers call `https://<router>/<routeId>/...`. The Worker forwards to the current `targetBaseUrl`. If that target is unreachable from Cloudflare, fan-out still returns `202` to the provider and the app never sees the request.
+
+Source: `src/worker.ts`, `src/forward.ts`
 
 ### MEDIUM Using `_router` or `dashboard` as a routeId
 

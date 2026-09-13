@@ -14,12 +14,13 @@ skills:
     domain: client-connection
     path: skills/connect/SKILL.md
     description: >
-      Use when connecting a cloud development environment to @wrangle/dev-router
-      via `npx dev-router connect`, DEV_ROUTER_URL, DEV_ROUTER_SECRET,
-      DEV_ROUTER_ROUTE, --route, --target, PUBLIC_DEV_URL, or DevRouterClient.
-      Covers sidecar install, URL detection, HTTPS target rules, and optional
-      route prefixes. Load forwarding for the public request contract; load
-      deploy to provision the shared Worker.
+      Use when connecting a remote cloud development environment to
+      @wrangle/dev-router via `npx dev-router connect`, DevRouterClient,
+      DEV_ROUTER_URL, DEV_ROUTER_SECRET, DEV_ROUTER_ROUTE, --route, --target,
+      PUBLIC_DEV_URL, Cursor Cloud Agents, Codespaces, Gitpod, Replit, VS Code
+      tunnels, or cloudflared. Covers sidecar install, public HTTPS target rules,
+      and why localhost port-forward is not a Worker target. Load forwarding for
+      the public request contract; load deploy to provision the shared Worker.
     purpose: Guidance for registering a cloud environment as a router subscriber using the CLI or DevRouterClient.
     sources:
       - shansmith01/wrangle-webhooks:skills/connect/connect.md
@@ -33,9 +34,10 @@ skills:
     path: skills/deploy/SKILL.md
     description: >
       Use when deploying or configuring the shared @wrangle/dev-router Cloudflare
-      Worker: wrangler deploy, wrangler types, DEV_ROUTER_SECRET, .dev.vars,
-      durable object bindings ROUTE and ROUTER_INDEX, /dashboard, or local
-      wrangler dev. Do not load this for client connect or request-forwarding
+      Worker from this repository: wrangler deploy, wrangler types,
+      DEV_ROUTER_SECRET, .dev.vars, durable object bindings ROUTE and ROUTER_INDEX,
+      /dashboard, custom hostnames, or local wrangler dev. The npm package is the
+      client only. Do not load this for client connect or request-forwarding
       behavior.
     purpose: Guidance for deploying and operating the shared ingress Worker.
     sources:
@@ -50,8 +52,9 @@ skills:
     description: >
       Use when implementing the app that receives @wrangle/dev-router traffic, or
       when explaining public URLs, routeId prefixes, 202 Accepted, header
-      stripping, X-Dev-Router-* headers, fan-out, 10s delivery timeout, or
-      route_not_found. Do not load this to install the sidecar or deploy the
+      stripping, X-Dev-Router-* headers, fan-out, 10s delivery timeout,
+      route_not_found, or why the subscriber origin must be public https reachable
+      from Cloudflare. Do not load this to install the sidecar or deploy the
       Worker.
     purpose: Guidance for the public ingress path and what subscribers actually receive.
     sources:
