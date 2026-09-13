@@ -93,3 +93,7 @@ npx wrangler types
 npm test
 npx wrangler dev
 ```
+
+## License
+
+[MIT](LICENSE)

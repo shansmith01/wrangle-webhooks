@@ -14,8 +14,10 @@
       "import": "./dist/client.js"
     }
   },
+  "license": "MIT",
   "files": [
     "dist",
+    "LICENSE",
     "README.md",
     "skills",
     "!skills/_artifacts"
