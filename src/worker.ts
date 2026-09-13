@@ -1,8 +1,11 @@
 import { requireManagementAuth, unauthorized } from "./auth";
+import { dashboardHtml, dashboardStatus, type DashboardRoute } from "./dashboard";
 import { RouteDurableObject } from "./durable-object";
 import { fanOutToSubscribers } from "./forward";
+import { RouterIndex } from "./router-index";
 import {
   TargetBaseUrlError,
+  durableObjectNameForIndex,
   durableObjectNameForRoute,
   isAllowedRouteId,
   isValidRouteId,
@@ -10,7 +13,7 @@ import {
   validateTargetBaseUrl
 } from "./shared";
 
-export { RouteDurableObject };
+export { RouteDurableObject, RouterIndex };
 
 const REGISTER = /^\/_router\/routes\/([^/]+)\/subscribers$/;
 const HEARTBEAT =
@@ -23,6 +26,9 @@ const DEFAULT_DEREGISTER = /^\/_router\/subscribers\/([^/]+)$/;
 export default {
   async fetch(request, env, ctx): Promise<Response> {
     const url = new URL(request.url);
+    if (url.pathname === "/dashboard" || url.pathname === "/dashboard.json") {
+      return handleDashboard(request, env, url.pathname);
+    }
     if (url.pathname === "/_router" || url.pathname.startsWith("/_router/")) {
       return handleManagement(request, env, url);
     }
@@ -124,6 +130,7 @@ async function registerSubscriber(
 
   const stub = env.ROUTE.getByName(durableObjectNameForRoute(routeId));
   const result = await stub.register(targetBaseUrl);
+  await indexStub(env).addRoute(routeId);
   return Response.json({
     subscriberId: result.subscriberId,
     routeId,
@@ -161,7 +168,59 @@ async function deregisterSubscriber(
   }
   const stub = env.ROUTE.getByName(durableObjectNameForRoute(routeId));
   await stub.deregister(subscriberId);
+  const remaining = await stub.getActiveSubscribers();
+  if (remaining.length === 0) {
+    await indexStub(env).removeRoute(routeId);
+  }
   return new Response(null, { status: 204 });
+}
+
+async function handleDashboard(
+  request: Request,
+  env: Env,
+  pathname: string
+): Promise<Response> {
+  if (request.method !== "GET" && request.method !== "HEAD") {
+    return Response.json({ error: "method_not_allowed" }, { status: 405 });
+  }
+
+  const routes = await loadDashboardRoutes(env);
+  const status = dashboardStatus(Boolean(env.DEV_ROUTER_SECRET), routes);
+  if (pathname === "/dashboard.json") {
+    return Response.json(status, {
+      headers: { "Cache-Control": "no-store" }
+    });
+  }
+  return new Response(dashboardHtml(status), {
+    headers: {
+      "Content-Type": "text/html; charset=utf-8",
+      "Cache-Control": "no-store"
+    }
+  });
+}
+
+async function loadDashboardRoutes(env: Env): Promise<DashboardRoute[]> {
+  const routeIds = await indexStub(env).listRoutes();
+  const routes: DashboardRoute[] = [];
+  for (const routeId of routeIds) {
+    const subscribers = await env.ROUTE.getByName(
+      durableObjectNameForRoute(routeId)
+    ).getActiveSubscribers();
+    if (subscribers.length === 0) {
+      await indexStub(env).removeRoute(routeId);
+      continue;
+    }
+    routes.push({
+      routeId,
+      publicPath: routeId === "" ? "/*" : `/${routeId}/*`,
+      subscribers
+    });
+  }
+  return routes;
+}
+
+function indexStub(env: Env): DurableObjectStub<RouterIndex> {
+  return env.ROUTER_INDEX.getByName(durableObjectNameForIndex());
 }
 
 async function handlePublic(

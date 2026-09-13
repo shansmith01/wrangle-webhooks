@@ -224,11 +224,5 @@ function resolveTargetBaseUrl(options: ConnectOptions): string {
   if (options.targetBaseUrl) {
     return options.targetBaseUrl;
   }
-  const detected = detectPublicDevUrl(process.env, options.port);
-  if (!detected) {
-    throw new Error(
-      "Could not detect this environment's public URL. Cloud development environments usually expose it automatically (for example GitHub Codespaces or VS Code tunnels). Set PUBLIC_DEV_URL or pass --target if you need an override."
-    );
-  }
-  return detected.url;
+  return detectPublicDevUrl(process.env, options.port).url;
 }

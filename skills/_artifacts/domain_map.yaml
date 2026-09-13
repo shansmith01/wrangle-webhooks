@@ -1,0 +1,189 @@
+# domain_map.yaml
+# Library: @wrangle/dev-router
+# Version: 0.1.0
+# Date: 2026-09-14
+# Status: reviewed
+
+library:
+  name: '@wrangle/dev-router'
+  version: '0.1.0'
+  repository: 'https://github.com/shansmith01/wrangle-webhooks'
+  description: 'Shared Cloudflare ingress router client for cloud development environments'
+  primary_framework: 'framework-agnostic'
+
+domains:
+  - name: Client connection
+    slug: client-connection
+    description: Registering a cloud environment so public HTTP reaches the local app
+  - name: Shared Worker operations
+    slug: worker-operations
+    description: Deploying and operating the single shared ingress Worker
+  - name: Ingress contract
+    slug: ingress-contract
+    description: What public callers and subscriber apps observe on the wire
+
+skills:
+  - name: connect
+    slug: connect
+    domain: client-connection
+    description: Connect a cloud environment with the CLI or DevRouterClient
+    type: core
+    covers:
+      - DevRouterClient
+      - npx dev-router connect
+      - detectPublicDevUrl
+      - validateTargetBaseUrl
+      - routeId
+    tasks:
+      - Install the GitHub package and run the sidecar
+      - Override detected public URLs
+      - Connect programmatically and disconnect on shutdown
+    failure_modes:
+      - mistake: Treat client as request runtime
+        mechanism: The npm client only registers and heartbeats; the Worker fans out HTTP.
+        wrong_pattern: |
+          import { DevRouterClient } from "@wrangle/dev-router";
+        correct_pattern: |
+          npx dev-router connect
+        source: skills/connect/connect.md
+        priority: HIGH
+        status: active
+        version_context: '0.1.0'
+        skills: ['connect']
+      - mistake: Pass http or credentialed target URLs
+        mechanism: validateTargetBaseUrl requires absolute https without credentials or fragments.
+        wrong_pattern: |
+          await client.connect({ targetBaseUrl: "http://localhost:3000" });
+        correct_pattern: |
+          await client.connect({ targetBaseUrl: "https://abc123.cloud-dev.example" });
+        source: src/shared.ts
+        priority: HIGH
+        status: active
+        version_context: '0.1.0'
+        skills: ['connect']
+      - mistake: npx public package name without install
+        mechanism: npx looks up npm package dev-router when the binary is not installed locally.
+        wrong_pattern: |
+          npx dev-router connect
+        correct_pattern: |
+          npm install -D github:shansmith01/wrangle-webhooks
+          npx dev-router connect
+        source: skills/connect/connect.md
+        priority: HIGH
+        status: active
+        version_context: '0.1.0'
+        skills: ['connect']
+  - name: deploy
+    slug: deploy
+    domain: worker-operations
+    description: Deploy and configure the shared Cloudflare Worker
+    type: lifecycle
+    covers:
+      - wrangler deploy
+      - DEV_ROUTER_SECRET
+      - wrangler types
+      - /dashboard
+    tasks:
+      - Deploy the Worker and set the management secret
+      - Run wrangler dev locally
+    failure_modes:
+      - mistake: Hardcode the management secret
+        mechanism: Secrets in wrangler vars or source leak through git and the dashboard config.
+        wrong_pattern: |
+          { "vars": { "DEV_ROUTER_SECRET": "super-secret" } }
+        correct_pattern: |
+          npx wrangler secret put DEV_ROUTER_SECRET
+        source: skills/deploy/deploy.md
+        priority: CRITICAL
+        status: active
+        version_context: '0.1.0'
+        skills: ['deploy']
+      - mistake: Hand-write Env after binding changes
+        mechanism: Env must come from wrangler types against wrangler.jsonc.
+        wrong_pattern: |
+          interface Env { ROUTE: DurableObjectNamespace }
+        correct_pattern: |
+          npx wrangler types
+        source: wrangler.jsonc
+        priority: HIGH
+        status: active
+        version_context: '0.1.0'
+        skills: ['deploy']
+      - mistake: Treat /dashboard as bearer-gated
+        mechanism: Only /_router/* checks Authorization; /dashboard is public status.
+        wrong_pattern: |
+          fetch("/dashboard", { headers: { Authorization: "Bearer ..." } })
+        correct_pattern: |
+          fetch("/dashboard")
+        source: src/worker.ts
+        priority: HIGH
+        status: active
+        version_context: '0.1.0'
+        skills: ['deploy']
+  - name: forwarding
+    slug: forwarding
+    domain: ingress-contract
+    description: Implement the subscriber app against the public request contract
+    type: core
+    covers:
+      - 202 Accepted
+      - route_not_found
+      - X-Dev-Router-* headers
+      - fan-out timeout
+    tasks:
+      - Map public prefixed URLs to the app path
+      - Handle 202 vs subscriber status
+    failure_modes:
+      - mistake: Expect subscriber status on the public response
+        mechanism: handlePublic returns 202 after waitUntil fan-out is accepted.
+        wrong_pattern: |
+          // public 202 means the app returned 200
+        correct_pattern: |
+          // inspect the subscriber app; public hop is 202
+        source: src/worker.ts
+        priority: HIGH
+        status: active
+        version_context: '0.1.0'
+        skills: ['forwarding']
+      - mistake: Treat routeId as a secret
+        mechanism: routeId is a public path prefix; management uses the bearer secret.
+        wrong_pattern: |
+          await client.connect({ routeId: "unguessable-secret" })
+        correct_pattern: |
+          await client.connect({ routeId: "my-web-app" })
+        source: skills/forwarding/forwarding.md
+        priority: HIGH
+        status: active
+        version_context: '0.1.0'
+        skills: ['forwarding']
+      - mistake: Follow redirects at the router hop
+        mechanism: deliverToSubscriber sets redirect manual and a 10s timeout.
+        wrong_pattern: |
+          // expect the router to chase 302 from the target
+        correct_pattern: |
+          // subscriber should respond without requiring redirect following
+        source: src/forward.ts
+        priority: MEDIUM
+        status: active
+        version_context: '0.1.0'
+        skills: ['forwarding']
+
+tensions:
+  - name: Public prefix vs management auth
+    skills: ['connect', 'forwarding']
+    description: routeId is visible in URLs while management uses a bearer secret
+    implication: Agents may treat --route as authentication or skip X-Dev-Router-Secret checks
+
+cross_references:
+  - from: connect
+    to: forwarding
+    reason: After connect, the app must implement the forwarding contract
+  - from: deploy
+    to: connect
+    reason: Clients need the deployed origin and secret
+
+gaps:
+  - skill: connect
+    question: Public npm package name once the registry publish exists
+    context: Current install path is GitHub; npx lookup guidance will change
+    status: open

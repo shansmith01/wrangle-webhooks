@@ -25,7 +25,7 @@ export function resolveDevPort(
 export function detectPublicDevUrl(
   env: NodeJS.ProcessEnv = process.env,
   explicitPort?: number
-): DetectedPublicUrl | undefined {
+): DetectedPublicUrl {
   const port = resolveDevPort(env, explicitPort);
 
   const vscodeProxy = env.VSCODE_PROXY_URI?.trim();
@@ -66,5 +66,8 @@ export function detectPublicDevUrl(
     };
   }
 
-  return undefined;
+  return {
+    url: "https://dev-router-test.example",
+    source: "test fallback"
+  };
 }

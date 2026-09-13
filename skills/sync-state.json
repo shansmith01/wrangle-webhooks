@@ -1,0 +1,30 @@
+{
+  "library_version": "0.1.0",
+  "skills": {
+    "connect": {
+      "sources_sha": {
+        "shansmith01/wrangle-webhooks:skills/connect/connect.md": "755c72e23c876ed3701c15158adf5809cd3b16836cfb96bba1d7f8231183406f",
+        "shansmith01/wrangle-webhooks:src/cli.ts": "5ef7e6ded1be10a41c87cdab8e9ff2bf6fe9798a510d3b396f85f91c22774c71",
+        "shansmith01/wrangle-webhooks:src/client.ts": "de1ca05208dd9561de54960e35e61738ba48cee1006ddcbe2d07fd305f6fa042",
+        "shansmith01/wrangle-webhooks:src/detect-url.ts": "98a738a208eaa94686f6f8ad3d446cfafc9c64b78931cbd241781e64d5ef4919",
+        "shansmith01/wrangle-webhooks:src/shared.ts": "fe60d0eb4425a2bf238ef94ab57802a67c7bdc483c10ef98b8acbdd8cc49aff2"
+      }
+    },
+    "deploy": {
+      "sources_sha": {
+        "shansmith01/wrangle-webhooks:skills/deploy/deploy.md": "5c28fcf85efeb87530cbb5a7a99d047fc35c873dd7aabad0cd1776dcfbf5fb68",
+        "shansmith01/wrangle-webhooks:wrangler.jsonc": "ebf814ab7f68ed187e3caa136cb9d5e3d2b318d87bb65f9bdb66993b9a046b1d",
+        "shansmith01/wrangle-webhooks:src/worker.ts": "4448bd8c7b168aa081a4651c777c09920c3019890aa49c30db94397ca1a0142a",
+        "shansmith01/wrangle-webhooks:src/auth.ts": "3b7991048e2dcb58b5f6f7e6dfb2bed4fa408c9065a7bcc97c68599e3f90daaa"
+      }
+    },
+    "forwarding": {
+      "sources_sha": {
+        "shansmith01/wrangle-webhooks:skills/forwarding/forwarding.md": "936959c1d6485e2eef798f7582973059006da57a8b10625ccf5a0c39b30e9ffa",
+        "shansmith01/wrangle-webhooks:src/worker.ts": "4448bd8c7b168aa081a4651c777c09920c3019890aa49c30db94397ca1a0142a",
+        "shansmith01/wrangle-webhooks:src/forward.ts": "0eb152ab09bd0f5889b4f95639fb8d9ce3ee637f4389a39693619a8a05f757f2",
+        "shansmith01/wrangle-webhooks:src/shared.ts": "fe60d0eb4425a2bf238ef94ab57802a67c7bdc483c10ef98b8acbdd8cc49aff2"
+      }
+    }
+  }
+}

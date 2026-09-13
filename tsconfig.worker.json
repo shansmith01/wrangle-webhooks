@@ -13,6 +13,8 @@
   "include": [
     "src/worker.ts",
     "src/durable-object.ts",
+    "src/router-index.ts",
+    "src/dashboard.ts",
     "src/forward.ts",
     "src/auth.ts",
     "src/types.ts",

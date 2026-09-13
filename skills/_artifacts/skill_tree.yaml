@@ -1,0 +1,61 @@
+library:
+  name: '@wrangle/dev-router'
+  version: '0.1.0'
+generated_from:
+  domain_map: skills/_artifacts/domain_map.yaml
+  skill_spec: skills/_artifacts/skill_spec.md
+review:
+  ignore: []
+distribution:
+  mode: none
+skills:
+  - name: connect
+    slug: connect
+    domain: client-connection
+    path: skills/connect/SKILL.md
+    description: >
+      Use when connecting a cloud development environment to @wrangle/dev-router
+      via `npx dev-router connect`, DEV_ROUTER_URL, DEV_ROUTER_SECRET,
+      DEV_ROUTER_ROUTE, --route, --target, PUBLIC_DEV_URL, or DevRouterClient.
+      Covers sidecar install, URL detection, HTTPS target rules, and optional
+      route prefixes. Load forwarding for the public request contract; load
+      deploy to provision the shared Worker.
+    purpose: Guidance for registering a cloud environment as a router subscriber using the CLI or DevRouterClient.
+    sources:
+      - shansmith01/wrangle-webhooks:skills/connect/connect.md
+      - shansmith01/wrangle-webhooks:src/cli.ts
+      - shansmith01/wrangle-webhooks:src/client.ts
+      - shansmith01/wrangle-webhooks:src/detect-url.ts
+      - shansmith01/wrangle-webhooks:src/shared.ts
+  - name: deploy
+    slug: deploy
+    domain: worker-operations
+    path: skills/deploy/SKILL.md
+    description: >
+      Use when deploying or configuring the shared @wrangle/dev-router Cloudflare
+      Worker: wrangler deploy, wrangler types, DEV_ROUTER_SECRET, .dev.vars,
+      durable object bindings ROUTE and ROUTER_INDEX, /dashboard, or local
+      wrangler dev. Do not load this for client connect or request-forwarding
+      behavior.
+    purpose: Guidance for deploying and operating the shared ingress Worker.
+    sources:
+      - shansmith01/wrangle-webhooks:skills/deploy/deploy.md
+      - shansmith01/wrangle-webhooks:wrangler.jsonc
+      - shansmith01/wrangle-webhooks:src/worker.ts
+      - shansmith01/wrangle-webhooks:src/auth.ts
+  - name: forwarding
+    slug: forwarding
+    domain: ingress-contract
+    path: skills/forwarding/SKILL.md
+    description: >
+      Use when implementing the app that receives @wrangle/dev-router traffic, or
+      when explaining public URLs, routeId prefixes, 202 Accepted, header
+      stripping, X-Dev-Router-* headers, fan-out, 10s delivery timeout, or
+      route_not_found. Do not load this to install the sidecar or deploy the
+      Worker.
+    purpose: Guidance for the public ingress path and what subscribers actually receive.
+    sources:
+      - shansmith01/wrangle-webhooks:skills/forwarding/forwarding.md
+      - shansmith01/wrangle-webhooks:src/worker.ts
+      - shansmith01/wrangle-webhooks:src/forward.ts
+      - shansmith01/wrangle-webhooks:src/shared.ts

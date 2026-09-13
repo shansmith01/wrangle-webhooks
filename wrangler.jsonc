@@ -13,6 +13,10 @@
       {
         "name": "ROUTE",
         "class_name": "RouteDurableObject"
+      },
+      {
+        "name": "ROUTER_INDEX",
+        "class_name": "RouterIndex"
       }
     ]
   },
@@ -20,6 +24,10 @@
     {
       "tag": "v1",
       "new_sqlite_classes": ["RouteDurableObject"]
+    },
+    {
+      "tag": "v2",
+      "new_sqlite_classes": ["RouterIndex"]
     }
   ]
 }

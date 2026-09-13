@@ -100,6 +100,47 @@ describe("management API", () => {
   });
 });
 
+describe("dashboard", () => {
+  it("serves HTML without authentication", async () => {
+    const response = await fetchWorker("https://dev-webhooks.example.com/dashboard");
+    expect(response.status).toBe(200);
+    expect(response.headers.get("content-type")).toMatch(/text\/html/);
+    const html = await response.text();
+    expect(html).toContain("Dev router");
+    expect(html).toContain("No active connections.");
+  });
+
+  it("lists active subscribers as JSON", async () => {
+    const created = await register("dash-route", "https://dev-dash.example");
+    const response = await fetchWorker("https://dev-webhooks.example.com/dashboard.json");
+    expect(response.status).toBe(200);
+    const body = (await response.json()) as {
+      ok: boolean;
+      secretConfigured: boolean;
+      routeCount: number;
+      subscriberCount: number;
+      routes: Array<{
+        routeId: string;
+        subscribers: Array<{ id: string; targetBaseUrl: string }>;
+      }>;
+    };
+    expect(body.ok).toBe(true);
+    expect(body.secretConfigured).toBe(true);
+    expect(body.routeCount).toBeGreaterThanOrEqual(1);
+    expect(body.subscriberCount).toBeGreaterThanOrEqual(1);
+    const route = body.routes.find((item) => item.routeId === "dash-route");
+    expect(route?.subscribers[0]?.id).toBe(created.subscriberId);
+    expect(route?.subscribers[0]?.targetBaseUrl).toBe("https://dev-dash.example/");
+  });
+
+  it("does not forward /dashboard to default subscribers", async () => {
+    await register("", "https://dev-root.example");
+    const response = await fetchWorker("https://dev-webhooks.example.com/dashboard");
+    expect(response.status).toBe(200);
+    expect(response.headers.get("content-type")).toMatch(/text\/html/);
+  });
+});
+
 describe("public routing", () => {
   it("returns 404 when a route has no active subscribers", async () => {
     const response = await fetchWorker(

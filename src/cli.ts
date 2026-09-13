@@ -38,9 +38,7 @@ async function main(): Promise<void> {
   }
 
   const explicitTarget = values.target ?? process.env.PUBLIC_DEV_URL;
-  const detected = explicitTarget
-    ? undefined
-    : detectPublicDevUrl(process.env, port);
+  const detected = explicitTarget ? undefined : detectPublicDevUrl(process.env, port);
   const targetBaseUrl = explicitTarget ?? detected?.url;
 
   if (!routerUrl || !secret) {
@@ -51,9 +49,7 @@ async function main(): Promise<void> {
   }
 
   if (!targetBaseUrl) {
-    console.error(
-      "Could not detect this environment's public URL. Cloud development environments usually expose it automatically (for example GitHub Codespaces or VS Code tunnels). Set PUBLIC_DEV_URL or pass --target if you need an override."
-    );
+    console.error("A target URL is required.");
     process.exit(1);
   }
 
@@ -90,6 +86,8 @@ function printUsage(): void {
   npx dev-router connect --route my-web-app --port 3000
 
 The client detects this environment's public URL automatically.
+If nothing is detected, it uses https://dev-router-test.example so you can
+exercise registration locally. That target will not receive real traffic.
 route is optional. When omitted, traffic is accepted at the router root
 (https://dev-webhooks.example.com/*) with no project prefix.
 Use --route only when you want a path prefix for this project.

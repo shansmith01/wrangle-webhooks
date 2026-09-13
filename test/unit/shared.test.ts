@@ -75,6 +75,7 @@ describe("remainingPathFromPublicUrl", () => {
 describe("isValidRouteId", () => {
   it("rejects the reserved management namespace", () => {
     expect(isValidRouteId("_router")).toBe(false);
+    expect(isValidRouteId("dashboard")).toBe(false);
   });
 
   it("allows an empty route id as a root catch-all", () => {

@@ -16,7 +16,9 @@
   },
   "files": [
     "dist",
-    "README.md"
+    "README.md",
+    "skills",
+    "!skills/_artifacts"
   ],
   "repository": {
     "type": "git",
@@ -28,8 +30,14 @@
     "dev": "wrangler dev",
     "deploy": "wrangler deploy",
     "cf-typegen": "wrangler types",
-    "test": "vitest run --config vitest.config.ts && vitest run --config vitest.worker.config.ts",
-    "typecheck": "tsc --noEmit && tsc --noEmit -p tsconfig.worker.json"
+    "test": "vitest run --config vitest.config.ts && vitest run --config vitest.worker.config.ts && intent validate --check",
+    "typecheck": "tsc --noEmit && tsc --noEmit -p tsconfig.worker.json",
+    "skills:validate": "intent validate --check",
+    "skills:stale": "intent stale"
+  },
+  "intent": {
+    "skills": ["@wrangle/dev-router"],
+    "exclude": []
   },
   "engines": {
     "node": ">=20"
@@ -39,11 +47,15 @@
     "typescript": "^5.9.2"
   },
   "devDependencies": {
+    "@tanstack/intent": "^0.4.0",
     "@types/node": "^24.5.2"
   },
   "optionalDependencies": {
     "@cloudflare/vitest-pool-workers": "^0.12.4",
     "vitest": "^3.2.4",
     "wrangler": "^4.37.1"
-  }
+  },
+  "keywords": [
+    "tanstack-intent"
+  ]
 }

@@ -49,9 +49,19 @@ export function validateTargetBaseUrl(value: string): string {
 }
 
 const DEFAULT_ROUTE_OBJECT_NAME = "dev-router:default";
+const ROUTER_INDEX_OBJECT_NAME = "dev-router:index";
+const RESERVED_ROUTE_IDS = new Set(["_router", "dashboard"]);
 
 export function isValidRouteId(routeId: string): boolean {
-  return routeId.length > 0 && routeId !== "_router" && /^[A-Za-z0-9._~-]+$/.test(routeId);
+  return (
+    routeId.length > 0 &&
+    !RESERVED_ROUTE_IDS.has(routeId) &&
+    /^[A-Za-z0-9._~-]+$/.test(routeId)
+  );
+}
+
+export function durableObjectNameForIndex(): string {
+  return ROUTER_INDEX_OBJECT_NAME;
 }
 
 export function isAllowedRouteId(routeId: string): boolean {

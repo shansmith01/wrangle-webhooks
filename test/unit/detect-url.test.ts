@@ -60,7 +60,10 @@ describe("detectPublicDevUrl", () => {
     });
   });
 
-  it("returns undefined when nothing can be detected", () => {
-    expect(detectPublicDevUrl({})).toBeUndefined();
+  it("falls back to a fake HTTPS URL for local testing", () => {
+    expect(detectPublicDevUrl({})).toEqual({
+      url: "https://dev-router-test.example",
+      source: "test fallback"
+    });
   });
 });
