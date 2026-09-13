@@ -1,4 +1,5 @@
 import { parseArgs } from "node:util";
+import { resolveCliCommand } from "./cli-command";
 import { DevRouterClient } from "./client";
 import { detectPublicDevUrl, resolveDevPort } from "./detect-url";
 
@@ -15,12 +16,12 @@ async function main(): Promise<void> {
     }
   });
 
-  const command = positionals[0];
-  if (values.help || !command) {
+  if (values.help) {
     printUsage();
-    process.exit(command ? 0 : 1);
+    process.exit(0);
   }
 
+  const command = resolveCliCommand(positionals);
   if (command !== "connect") {
     console.error(`Unknown command: ${command}`);
     printUsage();

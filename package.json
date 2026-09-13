@@ -18,6 +18,10 @@
     "dist",
     "README.md"
   ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/shansmith01/wrangle-webhooks.git"
+  },
   "scripts": {
     "build": "tsup",
     "prepare": "tsup",
@@ -30,11 +34,15 @@
   "engines": {
     "node": ">=20"
   },
-  "devDependencies": {
-    "@cloudflare/vitest-pool-workers": "^0.12.4",
-    "@types/node": "^24.5.2",
+  "dependencies": {
     "tsup": "^8.5.0",
-    "typescript": "^5.9.2",
+    "typescript": "^5.9.2"
+  },
+  "devDependencies": {
+    "@types/node": "^24.5.2"
+  },
+  "optionalDependencies": {
+    "@cloudflare/vitest-pool-workers": "^0.12.4",
     "vitest": "^3.2.4",
     "wrangler": "^4.37.1"
   }

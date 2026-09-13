@@ -67,6 +67,10 @@ One-shot without adding a dependency:
 npx --yes github:shansmith01/wrangle-webhooks connect
 ```
 
+Do not put `dev-router` after the GitHub URL. npm already runs that binary; extra `dev-router` is an argument, not the package name.
+
+If `DEV_ROUTER_URL` or `DEV_ROUTER_SECRET` is missing, the CLI prints an error and exits.
+
 That publishes the environment at the router root (`https://dev-webhooks.example.com/*`). Pass `--route my-web-app` or `DEV_ROUTER_ROUTE` only when you want a project prefix.
 
 `connect` detects the current cloud environment's public URL (GitHub Codespaces, VS Code tunnels, Gitpod, and similar). It uses `DEV_ROUTER_PORT` or `PORT` when the platform URL includes a port, and defaults to `3000`.
