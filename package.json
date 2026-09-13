@@ -20,6 +20,7 @@
   ],
   "scripts": {
     "build": "tsup",
+    "prepare": "tsup",
     "dev": "wrangler dev",
     "deploy": "wrangler deploy",
     "cf-typegen": "wrangler types",

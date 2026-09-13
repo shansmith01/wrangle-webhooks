@@ -46,15 +46,25 @@ Bind a hostname such as `dev-webhooks.example.com` to the Worker in the Cloudfla
 
 ## Use the client in a project
 
+This package is not on the npm registry yet (`npx dev-router` will 404). Install it from GitHub, then run the local binary:
+
 ```bash
-npm install -D @wrangle/dev-router
+npm install -D github:shansmith01/wrangle-webhooks
 ```
 
 ```bash
-export DEV_ROUTER_URL=https://dev-webhooks.example.com
+export DEV_ROUTER_URL=https://dev-router.websupport-4ba.workers.dev
 export DEV_ROUTER_SECRET=<secret>
 
 npx dev-router connect
+```
+
+After the GitHub install, `npx dev-router` uses `node_modules/.bin/dev-router` from this package (`@wrangle/dev-router`). Do not run `npx dev-router` in a project that has not installed it first — npm will look up a public package named `dev-router`.
+
+One-shot without adding a dependency:
+
+```bash
+npx --yes github:shansmith01/wrangle-webhooks connect
 ```
 
 That publishes the environment at the router root (`https://dev-webhooks.example.com/*`). Pass `--route my-web-app` or `DEV_ROUTER_ROUTE` only when you want a project prefix.
