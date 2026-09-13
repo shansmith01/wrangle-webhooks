@@ -1,11 +1,11 @@
 # domain_map.yaml
-# Library: @wrangle/dev-router
+# Library: @powerboard/dev-router
 # Version: 0.1.0
 # Date: 2026-09-14
 # Status: reviewed
 
 library:
-  name: '@wrangle/dev-router'
+  name: '@powerboard/dev-router'
   version: '0.1.0'
   repository: 'https://github.com/shansmith01/wrangle-webhooks'
   description: 'Shared Cloudflare ingress router client for cloud development environments'
@@ -35,7 +35,7 @@ skills:
       - validateTargetBaseUrl
       - routeId
     tasks:
-      - Install @wrangle/dev-router and run the sidecar
+      - Install @powerboard/dev-router and run the sidecar
       - Expose a Cloudflare-reachable HTTPS origin in remote clouds
       - Override detected public URLs
       - Connect programmatically and disconnect on shutdown
@@ -43,7 +43,7 @@ skills:
       - mistake: Treat client as request runtime
         mechanism: The npm client only registers and heartbeats; the Worker fans out HTTP.
         wrong_pattern: |
-          import { DevRouterClient } from "@wrangle/dev-router";
+          import { DevRouterClient } from "@powerboard/dev-router";
         correct_pattern: |
           npx dev-router connect
         source: skills/connect/connect.md
@@ -67,7 +67,7 @@ skills:
         wrong_pattern: |
           npx dev-router connect
         correct_pattern: |
-          npm install -D @wrangle/dev-router
+          npm install -D @powerboard/dev-router
           npx dev-router connect
         source: skills/connect/connect.md
         priority: HIGH
@@ -197,5 +197,5 @@ cross_references:
 gaps:
   - skill: connect
     question: Public npm package name once the registry publish exists
-    context: Install path is npm @wrangle/dev-router; unscoped npx dev-router still looks up a different package
+    context: Install path is npm @powerboard/dev-router; unscoped npx dev-router still looks up a different package
     status: closed

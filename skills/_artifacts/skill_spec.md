@@ -1,10 +1,10 @@
-# @wrangle/dev-router — Skill Spec
+# @powerboard/dev-router — Skill Spec
 
 Shared Cloudflare ingress for ephemeral cloud development environments. One Worker plus Durable Objects; an npm sidecar registers environments and heartbeats. Skills target library version 0.1.0.
 
 ## Coverage and batch history
 
-- **2026-09-14 / 0.1.0** — Initial batch for connect, deploy, and forwarding. Source: README plus `src/cli.ts`, `src/client.ts`, `src/worker.ts`, `src/forward.ts`, `src/shared.ts`, `wrangler.jsonc`. Skill files live beside their source docs under `skills/<task>/`. Checks: existing Vitest unit/worker tests for CLI, client, URL detection, and forwarding helpers; `intent validate`. Fresh-consumer Intent session not run (unverified). Public docs use npm `@wrangle/dev-router`; connect covers remote cloud environments (Codespaces, Cloud Agents, tunnels). Optional dashboard skill still remaining.
+- **2026-09-14 / 0.1.0** — Initial batch for connect, deploy, and forwarding. Source: README plus `src/cli.ts`, `src/client.ts`, `src/worker.ts`, `src/forward.ts`, `src/shared.ts`, `wrangler.jsonc`. Skill files live beside their source docs under `skills/<task>/`. Checks: existing Vitest unit/worker tests for CLI, client, URL detection, and forwarding helpers; `intent validate`. Fresh-consumer Intent session not run (unverified). Public docs use npm `@powerboard/dev-router`; connect covers remote cloud environments (Codespaces, Cloud Agents, tunnels). Optional dashboard skill still remaining.
 
 ## Domains
 
@@ -74,7 +74,7 @@ Shared Cloudflare ingress for ephemeral cloud development environments. One Work
 
 | Skill | Question | Status |
 | --- | --- | --- |
-| connect | Public npm name after registry publish | closed — install `@wrangle/dev-router` |
+| connect | Public npm name after registry publish | closed — install `@powerboard/dev-router` |
 
 ## Recommended Skill File Structure
 

@@ -1,7 +1,7 @@
 ---
 name: deploy
 description: >
-  Use when deploying or configuring the shared @wrangle/dev-router Cloudflare
+  Use when deploying or configuring the shared @powerboard/dev-router Cloudflare
   Worker from this repository: wrangler deploy, wrangler types,
   DEV_ROUTER_SECRET, .dev.vars, durable object bindings ROUTE and ROUTER_INDEX,
   /dashboard, custom hostnames, or local wrangler dev. The npm package is the
@@ -10,7 +10,7 @@ description: >
 metadata:
   purpose: Guidance for deploying and operating the shared ingress Worker.
   type: lifecycle
-  library: "@wrangle/dev-router"
+  library: "@powerboard/dev-router"
   library_version: "0.1.0"
 sources:
   - shansmith01/wrangle-webhooks:skills/deploy/deploy.md

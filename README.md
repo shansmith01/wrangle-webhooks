@@ -1,4 +1,6 @@
-# @wrangle/dev-router
+# [@powerboard/dev-router](https://www.npmjs.com/package/@powerboard/dev-router)
+
+[npm](https://www.npmjs.com/package/@powerboard/dev-router)
 
 Shared Cloudflare ingress for ephemeral cloud development environments. Deploy the Worker once, then install the npm client in any project that needs a **stable public URL**.
 
@@ -30,10 +32,10 @@ If a named route has active subscribers, it wins for that prefix. Otherwise an e
 
 | Role | What you use | Install |
 | --- | --- | --- |
-| **App / cloud environment** | Sidecar CLI and `DevRouterClient` | `npm install -D @wrangle/dev-router` |
+| **App / cloud environment** | Sidecar CLI and `DevRouterClient` | [`npm install -D @powerboard/dev-router`](https://www.npmjs.com/package/@powerboard/dev-router) |
 | **Operator** | This repository’s Cloudflare Worker | Clone the repo, `npx wrangler deploy` |
 
-The published npm package is the **client**. The Worker source, Wrangler config, and Durable Objects live in this GitHub repository.
+The published npm package is the **[client](https://www.npmjs.com/package/@powerboard/dev-router)**. The Worker source, Wrangler config, and Durable Objects live in this GitHub repository.
 
 Management endpoints require `Authorization: Bearer <secret>`. Store that value as the Worker secret `DEV_ROUTER_SECRET`. Give the same secret to clients as `DEV_ROUTER_SECRET`.
 
@@ -51,7 +53,7 @@ Desktop and many “cloud agent” previews only **port-forward to localhost on 
 ### 1. Configure the sidecar
 
 ```bash
-npm install -D @wrangle/dev-router
+npm install -D @powerboard/dev-router
 
 export DEV_ROUTER_URL=https://dev-webhooks.example.com
 export DEV_ROUTER_SECRET=<same secret as the Worker>
@@ -81,10 +83,10 @@ The CLI prints `Public:` (give this URL to webhook/OAuth providers) and `Forward
 One-shot without adding a dependency:
 
 ```bash
-npx --yes @wrangle/dev-router connect
+npx --yes @powerboard/dev-router connect
 ```
 
-Do not run `npx dev-router` in a project that has not installed this package. npm will look up an unrelated public package named `dev-router`. Prefer `npx --yes @wrangle/dev-router connect` or install first.
+Do not run `npx dev-router` in a project that has not installed this package. npm will look up an unrelated public package named `dev-router`. Prefer `npx --yes @powerboard/dev-router connect` or install first.
 
 ### 2. Give the Worker a reachable HTTPS origin
 
@@ -123,7 +125,7 @@ Heartbeats every 60 seconds keep the subscriber alive. Expiry is 5 minutes of si
 Programmatic equivalent:
 
 ```ts
-import { DevRouterClient } from "@wrangle/dev-router";
+import { DevRouterClient } from "@powerboard/dev-router";
 
 const client = new DevRouterClient({
   routerUrl: process.env.DEV_ROUTER_URL!,
@@ -171,7 +173,7 @@ Bind a hostname such as `dev-webhooks.example.com` in the Cloudflare dashboard. 
 
 ## Agent Skills (TanStack Intent)
 
-This package ships versioned Agent Skills in `skills/` with the npm tarball. They match the installed `@wrangle/dev-router` version.
+This package ships versioned Agent Skills in `skills/` with the npm tarball. They match the installed `@powerboard/dev-router` version.
 
 ### Maintainers
 
@@ -191,27 +193,27 @@ Permit this package explicitly. Discovery is not trust:
 ```json
 {
   "intent": {
-    "skills": ["@wrangle/dev-router"],
+    "skills": ["@powerboard/dev-router"],
     "exclude": []
   }
 }
 ```
 
-Use `intent.exclude` to drop a package or named skill after the allowlist (for example `"@wrangle/dev-router#deploy"` if this app only consumes the client).
+Use `intent.exclude` to drop a package or named skill after the allowlist (for example `"@powerboard/dev-router#deploy"` if this app only consumes the client).
 
 Load only the skill for the current task:
 
 ```bash
 npx @tanstack/intent@latest install
 npx @tanstack/intent@latest list
-npx @tanstack/intent@latest load @wrangle/dev-router#connect
+npx @tanstack/intent@latest load @powerboard/dev-router#connect
 ```
 
 | Task | Skill |
 | --- | --- |
-| Sidecar CLI or `DevRouterClient` in a cloud environment | `@wrangle/dev-router#connect` |
-| Deploy the shared Worker | `@wrangle/dev-router#deploy` |
-| Implement the app that receives traffic | `@wrangle/dev-router#forwarding` |
+| Sidecar CLI or `DevRouterClient` in a cloud environment | `@powerboard/dev-router#connect` |
+| Deploy the shared Worker | `@powerboard/dev-router#deploy` |
+| Implement the app that receives traffic | `@powerboard/dev-router#forwarding` |
 
 `intent hooks install` can add session catalogs and edit gates for some agents. Those hooks are a convenience. They can observe a list/load command; they do not verify that the command succeeded, that the skill matched the task, or that the model applied it. They are not a security boundary.
 

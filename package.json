@@ -1,5 +1,5 @@
 {
-  "name": "@wrangle/dev-router",
+  "name": "@powerboard/dev-router",
   "version": "0.1.0",
   "description": "Sidecar client for a shared Cloudflare ingress Worker: stable public URLs for ephemeral cloud development environments",
   "type": "module",
@@ -38,8 +38,12 @@
     "skills:stale": "intent stale"
   },
   "intent": {
-    "skills": ["@wrangle/dev-router"],
+    "skills": ["@powerboard/dev-router"],
     "exclude": []
+  },
+  "publishConfig": {
+    "access": "public",
+    "registry": "https://registry.npmjs.org/"
   },
   "engines": {
     "node": ">=20"

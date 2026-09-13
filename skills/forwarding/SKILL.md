@@ -1,7 +1,7 @@
 ---
 name: forwarding
 description: >
-  Use when implementing the app that receives @wrangle/dev-router traffic, or
+  Use when implementing the app that receives @powerboard/dev-router traffic, or
   when explaining public URLs, routeId prefixes, 202 Accepted, header
   stripping, X-Dev-Router-* headers, fan-out, 10s delivery timeout,
   route_not_found, or why the subscriber origin must be public https reachable
@@ -10,7 +10,7 @@ description: >
 metadata:
   purpose: Guidance for the public ingress path and what subscribers actually receive.
   type: core
-  library: "@wrangle/dev-router"
+  library: "@powerboard/dev-router"
   library_version: "0.1.0"
 sources:
   - shansmith01/wrangle-webhooks:skills/forwarding/forwarding.md

@@ -1,6 +1,6 @@
 # Deploy the shared router
 
-Deploy the Worker once from **this GitHub repository**. The npm package `@wrangle/dev-router` is the client only; it does not deploy the Worker. Install that client in each project that needs a stable public URL. Bind a hostname such as `dev-webhooks.example.com` to the Worker in the Cloudflare dashboard. Every remote environment then sets `DEV_ROUTER_URL` to that origin.
+Deploy the Worker once from **this GitHub repository**. The npm package `@powerboard/dev-router` is the client only; it does not deploy the Worker. Install that client in each project that needs a stable public URL. Bind a hostname such as `dev-webhooks.example.com` to the Worker in the Cloudflare dashboard. Every remote environment then sets `DEV_ROUTER_URL` to that origin.
 
 The Worker must be able to `fetch()` each subscriber’s public `https://` target. Subscribers must be able to `fetch()` this origin for register and heartbeat (allowlist this hostname in locked-down Cloud Agent / VPC egress policies).
 

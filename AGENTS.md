@@ -1,6 +1,6 @@
 # Agent notes
 
-Versioned Agent Skills for `@wrangle/dev-router` live beside their source docs in `skills/`. Load only the skill that matches the current task:
+Versioned Agent Skills for `@powerboard/dev-router` live beside their source docs in `skills/`. Load only the skill that matches the current task:
 
 - Connect sidecar / `DevRouterClient` (including remote cloud environments) → `skills/connect/SKILL.md`
 - Deploy the shared Worker → `skills/deploy/SKILL.md`

@@ -1,5 +1,5 @@
 library:
-  name: '@wrangle/dev-router'
+  name: '@powerboard/dev-router'
   version: '0.1.0'
 generated_from:
   domain_map: skills/_artifacts/domain_map.yaml
@@ -15,7 +15,7 @@ skills:
     path: skills/connect/SKILL.md
     description: >
       Use when connecting a remote cloud development environment to
-      @wrangle/dev-router via `npx dev-router connect`, DevRouterClient,
+      @powerboard/dev-router via `npx dev-router connect`, DevRouterClient,
       DEV_ROUTER_URL, DEV_ROUTER_SECRET, DEV_ROUTER_ROUTE, --route, --target,
       PUBLIC_DEV_URL, Cursor Cloud Agents, Codespaces, Gitpod, Replit, VS Code
       tunnels, or cloudflared. Covers sidecar install, public HTTPS target rules,
@@ -33,7 +33,7 @@ skills:
     domain: worker-operations
     path: skills/deploy/SKILL.md
     description: >
-      Use when deploying or configuring the shared @wrangle/dev-router Cloudflare
+      Use when deploying or configuring the shared @powerboard/dev-router Cloudflare
       Worker from this repository: wrangler deploy, wrangler types,
       DEV_ROUTER_SECRET, .dev.vars, durable object bindings ROUTE and ROUTER_INDEX,
       /dashboard, custom hostnames, or local wrangler dev. The npm package is the
@@ -50,7 +50,7 @@ skills:
     domain: ingress-contract
     path: skills/forwarding/SKILL.md
     description: >
-      Use when implementing the app that receives @wrangle/dev-router traffic, or
+      Use when implementing the app that receives @powerboard/dev-router traffic, or
       when explaining public URLs, routeId prefixes, 202 Accepted, header
       stripping, X-Dev-Router-* headers, fan-out, 10s delivery timeout,
       route_not_found, or why the subscriber origin must be public https reachable

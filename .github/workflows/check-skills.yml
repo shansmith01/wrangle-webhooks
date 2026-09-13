@@ -10,7 +10,7 @@
 # intent-workflow-version: 3
 #
 # Template variables (replaced by `intent setup`):
-#   @wrangle/dev-router — e.g. @tanstack/query or my-workspace workspace
+#   @powerboard/dev-router — e.g. @tanstack/query or my-workspace workspace
 
 name: Check Skills
 
@@ -70,7 +70,7 @@ jobs:
       - name: Check skills
         id: stale
         run: |
-          intent stale --github-review --package-label "@wrangle/dev-router"
+          intent stale --github-review --package-label "@powerboard/dev-router"
 
       - name: Open or update review PR
         if: steps.stale.outputs.has_review == 'true'

@@ -1,11 +1,11 @@
 # Connect a cloud environment
 
-Install `@wrangle/dev-router` in a project that needs a stable public URL, then run the sidecar **on the same machine as the app**. The client only registers, heartbeats, and deregisters. It is not application runtime and it does not receive HTTP.
+Install `@powerboard/dev-router` in a project that needs a stable public URL, then run the sidecar **on the same machine as the app**. The client only registers, heartbeats, and deregisters. It is not application runtime and it does not receive HTTP.
 
 The Worker fans traffic from Cloudflare to `targetBaseUrl`. That value must be an absolute public `https://` origin (or origin plus base path) that Cloudflare can fetch. IDE port-forward to `localhost` on your laptop is not sufficient.
 
 ```bash
-npm install -D @wrangle/dev-router
+npm install -D @powerboard/dev-router
 ```
 
 ```bash
@@ -15,12 +15,12 @@ export DEV_ROUTER_SECRET=<secret>
 npx dev-router connect
 ```
 
-After install, `npx dev-router` uses `node_modules/.bin/dev-router`. Do not run `npx dev-router` in a project that has not installed `@wrangle/dev-router` — npm will look up a different public package named `dev-router`.
+After install, `npx dev-router` uses `node_modules/.bin/dev-router`. Do not run `npx dev-router` in a project that has not installed `@powerboard/dev-router` — npm will look up a different public package named `dev-router`.
 
 One-shot without adding a dependency:
 
 ```bash
-npx --yes @wrangle/dev-router connect
+npx --yes @powerboard/dev-router connect
 ```
 
 If `DEV_ROUTER_URL` or `DEV_ROUTER_SECRET` is missing, the CLI prints an error and exits.
@@ -91,7 +91,7 @@ npx dev-router connect --target https://abc123.cloud-dev.example
 ## Programmatic API
 
 ```ts
-import { DevRouterClient } from "@wrangle/dev-router";
+import { DevRouterClient } from "@powerboard/dev-router";
 
 const client = new DevRouterClient({
   routerUrl: process.env.DEV_ROUTER_URL!,

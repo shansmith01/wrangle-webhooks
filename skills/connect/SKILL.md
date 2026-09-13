@@ -2,7 +2,7 @@
 name: connect
 description: >
   Use when connecting a remote cloud development environment to
-  @wrangle/dev-router via `npx dev-router connect`, DevRouterClient,
+  @powerboard/dev-router via `npx dev-router connect`, DevRouterClient,
   DEV_ROUTER_URL, DEV_ROUTER_SECRET, DEV_ROUTER_ROUTE, --route, --target,
   PUBLIC_DEV_URL, Cursor Cloud Agents, Codespaces, Gitpod, Replit, VS Code
   tunnels, or cloudflared. Covers sidecar install, public HTTPS target rules,
@@ -11,7 +11,7 @@ description: >
 metadata:
   purpose: Guidance for registering a cloud environment as a router subscriber using the CLI or DevRouterClient.
   type: core
-  library: "@wrangle/dev-router"
+  library: "@powerboard/dev-router"
   library_version: "0.1.0"
 sources:
   - shansmith01/wrangle-webhooks:skills/connect/connect.md
@@ -28,7 +28,7 @@ Register the current environment with the shared ingress Worker. Keep the client
 ## Setup
 
 ```bash
-npm install -D @wrangle/dev-router
+npm install -D @powerboard/dev-router
 export DEV_ROUTER_URL=https://dev-webhooks.example.com
 export DEV_ROUTER_SECRET=<secret>
 npx dev-router connect
@@ -45,7 +45,7 @@ npx dev-router connect
 Programmatic equivalent:
 
 ```ts
-import { DevRouterClient } from "@wrangle/dev-router";
+import { DevRouterClient } from "@powerboard/dev-router";
 
 const client = new DevRouterClient({
   routerUrl: process.env.DEV_ROUTER_URL!,
@@ -55,7 +55,7 @@ const connection = await client.connect();
 await connection.disconnect();
 ```
 
-One-shot: `npx --yes @wrangle/dev-router connect`. Do not run unscoped `npx dev-router` unless this package is already installed.
+One-shot: `npx --yes @powerboard/dev-router connect`. Do not run unscoped `npx dev-router` unless this package is already installed.
 
 ## Core Patterns
 
@@ -96,7 +96,7 @@ Explicit `targetBaseUrl` must be absolute `https://` without credentials or a fr
 Wrong:
 
 ```ts
-import { DevRouterClient } from "@wrangle/dev-router";
+import { DevRouterClient } from "@powerboard/dev-router";
 // expecting the client to receive or proxy HTTP
 ```
 
@@ -132,9 +132,9 @@ Wrong:
 npx dev-router connect
 ```
 
-in a project that has not installed `@wrangle/dev-router`.
+in a project that has not installed `@powerboard/dev-router`.
 
-Correct: `npm install -D @wrangle/dev-router` first, or `npx --yes @wrangle/dev-router connect`.
+Correct: `npm install -D @powerboard/dev-router` first, or `npx --yes @powerboard/dev-router connect`.
 
 Source: `skills/connect/connect.md`
 
