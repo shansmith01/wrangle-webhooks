@@ -2,6 +2,7 @@ import { parseArgs } from "node:util";
 import { resolveCliCommand } from "./cli-command";
 import { DevRouterClient } from "./client";
 import { detectPublicDevUrl, resolveDevPort } from "./detect-url";
+import { waitForShutdownSignal } from "./wait-for-shutdown";
 
 async function main(): Promise<void> {
   const { positionals, values } = parseArgs({
@@ -70,13 +71,10 @@ async function main(): Promise<void> {
   if (detected) {
     console.log(`(detected from ${detected.source})`);
   }
+  console.log("");
+  console.log("Press Ctrl+C to disconnect.");
 
-  await new Promise<void>((resolve) => {
-    const finish = (): void => resolve();
-    process.once("SIGINT", finish);
-    process.once("SIGTERM", finish);
-  });
-
+  await waitForShutdownSignal();
   await connection.disconnect();
 }
 
