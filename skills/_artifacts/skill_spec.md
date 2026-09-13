@@ -1,10 +1,11 @@
 # @powerboard/dev-router — Skill Spec
 
-Shared Cloudflare ingress for ephemeral cloud development environments. One Worker plus Durable Objects; an npm sidecar registers environments and heartbeats. Skills target library version 0.1.0.
+Shared Cloudflare ingress for ephemeral cloud development environments. One Worker plus Durable Objects; an npm sidecar reverse-tunnels local HTTP servers (or optionally registers a public HTTPS target). Skills target library version 0.2.0.
 
 ## Coverage and batch history
 
-- **2026-09-14 / 0.1.0** — Initial batch for connect, deploy, and forwarding. Source: README plus `src/cli.ts`, `src/client.ts`, `src/worker.ts`, `src/forward.ts`, `src/shared.ts`, `wrangler.jsonc`. Skill files live beside their source docs under `skills/<task>/`. Checks: existing Vitest unit/worker tests for CLI, client, URL detection, and forwarding helpers; `intent validate`. Fresh-consumer Intent session not run (unverified). Public docs use npm `@powerboard/dev-router`; connect covers remote cloud environments (Codespaces, Cloud Agents, tunnels). Optional dashboard skill still remaining.
+- **2026-09-14 / 0.2.0** — Reverse-tunnel transport, OAuth subscriber responses, correlated `state` routing, replica-mode “OAuth this environment after connect” prompt, per-connection forward tokens, immediate tunnel disconnect.
+- **2026-09-14 / 0.1.0** — Initial batch for connect, deploy, and forwarding.
 
 ## Domains
 
@@ -18,19 +19,21 @@ Shared Cloudflare ingress for ephemeral cloud development environments. One Work
 
 | Skill | Type | Domain | What it covers | Failure modes |
 | --- | --- | --- | --- | --- |
-| connect | core | client-connection | CLI, DevRouterClient, detection, HTTPS targets, remote clouds | 3 |
-| deploy | lifecycle | worker-operations | wrangler deploy, secrets, types, dashboard | 3 |
-| forwarding | core | ingress-contract | 202, headers, fan-out, route prefixes, public targets | 4 |
+| connect | core | client-connection | CLI, DevRouterClient, reverse tunnel, replica-mode OAuth prompt | 5 |
+| deploy | lifecycle | worker-operations | wrangler deploy, secrets, types, dashboard, WSS | 3 |
+| forwarding | core | ingress-contract | webhook 202, OAuth proxy, replica credentials, headers, fan-out vs correlation | 6 |
 
 ## Failure Mode Inventory
 
-### connect (3 failure modes)
+### connect (5 failure modes)
 
 | # | Mistake | Priority | Source | Cross-skill? |
 | --- | --- | --- | --- | --- |
-| 1 | Treat client as request runtime | HIGH | skills/connect/connect.md | — |
-| 2 | Pass localhost, http, or IDE-only port-forward targets | HIGH | src/shared.ts | — |
+| 1 | Treat client as in-process middleware | HIGH | skills/connect/connect.md | — |
+| 2 | Pass localhost as `--target` instead of `--local-url` | HIGH | src/shared.ts | — |
 | 3 | npx public package name `dev-router` without install | HIGH | skills/connect/connect.md | — |
+| 4 | Reserved route prefix | MEDIUM | src/shared.ts | — |
+| 5 | Declare a new environment ready without OAuth | HIGH | skills/connect/connect.md | forwarding |
 
 ### deploy (3 failure modes)
 
@@ -40,52 +43,37 @@ Shared Cloudflare ingress for ephemeral cloud development environments. One Work
 | 2 | Hand-write Env after binding changes | HIGH | wrangler.jsonc | — |
 | 3 | Treat /dashboard as bearer-gated | HIGH | src/worker.ts | — |
 
-### forwarding (4 failure modes)
+### forwarding (6 failure modes)
 
 | # | Mistake | Priority | Source | Cross-skill? |
 | --- | --- | --- | --- | --- |
-| 1 | Expect subscriber status on the public response | HIGH | src/worker.ts | — |
-| 2 | Treat routeId as a secret | HIGH | skills/forwarding/forwarding.md | connect |
-| 3 | Point providers at the tunnel URL instead of the router | HIGH | src/worker.ts | connect |
-| 4 | Follow redirects at the router hop | MEDIUM | src/forward.ts | — |
+| 1 | Expect subscriber status on webhook 202 | HIGH | src/worker.ts | — |
+| 2 | Fan OAuth codes to every subscriber | HIGH | src/oauth-state.ts | connect |
+| 3 | Treat routeId as a secret | HIGH | skills/forwarding/forwarding.md | connect |
+| 4 | Point providers at the local URL instead of the router | HIGH | src/worker.ts | connect |
+| 5 | Follow redirects at the router hop | MEDIUM | src/forward.ts | — |
+| 6 | Fan-out webhooks to a replica that never OAuthed | HIGH | skills/forwarding/forwarding.md | connect |
 
 ## Tensions
 
 | Tension | Skills | Agent implication |
 | --- | --- | --- |
 | Public prefix vs management auth | connect ↔ forwarding | Using --route as a credential |
+| Replica OAuth vs webhook fan-out | connect ↔ forwarding | Connecting without prompting this environment to OAuth |
 
 ## Cross-References
 
 | From | To | Reason |
 | --- | --- | --- |
-| connect | forwarding | Subscriber app must match the wire contract |
+| connect | forwarding | Subscriber app must match the wire contract; replica OAuth before fan-out |
 | deploy | connect | Clients need the deployed origin |
-
-## Subsystems & Reference Candidates
-
-| Skill | Subsystems | Reference candidates |
-| --- | --- | --- |
-| connect | — | — |
-| deploy | — | — |
-| forwarding | — | — |
 
 ## Remaining Gaps
 
-| Skill | Question | Status |
-| --- | --- | --- |
-| connect | Public npm name after registry publish | closed — install `@powerboard/dev-router` |
+None for 0.2.0 reverse-tunnel + OAuth correlation.
 
 ## Recommended Skill File Structure
 
 - **Core skills:** connect, forwarding
-- **Framework skills:** none
 - **Lifecycle skills:** deploy
-- **Composition skills:** none
 - **Reference files:** none — each skill stays next to its `*.md` source doc
-
-## Composition Opportunities
-
-| Library | Integration points | Composition skill needed? |
-| --- | --- | --- |
-| wrangler | deploy, types, secrets | no — covered by deploy |

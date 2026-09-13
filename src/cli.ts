@@ -10,6 +10,7 @@ async function main(): Promise<void> {
     options: {
       route: { type: "string" },
       target: { type: "string" },
+      "local-url": { type: "string" },
       port: { type: "string" },
       url: { type: "string" },
       secret: { type: "string" },
@@ -38,8 +39,15 @@ async function main(): Promise<void> {
     process.exit(1);
   }
 
+  const localUrl = values["local-url"] ?? process.env.DEV_ROUTER_LOCAL_URL;
   const explicitTarget = values.target ?? process.env.PUBLIC_DEV_URL;
-  const detected = explicitTarget ? undefined : detectPublicDevUrl(process.env, port);
+
+  if (localUrl && explicitTarget) {
+    console.error("--local-url and --target are mutually exclusive.");
+    process.exit(1);
+  }
+
+  const detected = !localUrl && !explicitTarget ? detectPublicDevUrl(process.env, port) : undefined;
   const targetBaseUrl = explicitTarget ?? detected?.url;
 
   if (!routerUrl || !secret) {
@@ -49,28 +57,40 @@ async function main(): Promise<void> {
     process.exit(1);
   }
 
-  if (!targetBaseUrl) {
-    console.error("A target URL is required.");
+  if (!localUrl && !targetBaseUrl) {
+    console.error("A target URL or --local-url is required.");
     process.exit(1);
   }
 
   const client = new DevRouterClient({ routerUrl, secret });
   const connection = await client.connect({
     routeId,
-    targetBaseUrl,
+    localUrl,
+    targetBaseUrl: localUrl ? undefined : targetBaseUrl,
     port: port ?? resolveDevPort(process.env)
   });
 
-  console.log("Dev router connected");
+  console.log(
+    connection.transport === "tunnel"
+      ? "Dev router connected (reverse tunnel)"
+      : "Dev router connected"
+  );
   console.log("");
   console.log("Public:");
   console.log(connection.publicUrl);
   console.log("");
   console.log("Forwarding to:");
   console.log(`${connection.targetBaseUrl}/*`);
-  if (detected) {
+  if (connection.transport === "tunnel") {
+    console.log("(local reverse tunnel; the Worker cannot see this URL)");
+  } else if (detected) {
     console.log(`(detected from ${detected.source})`);
   }
+  console.log("");
+  console.log("Replica mode: this environment is subscribed, not yet provider-ready.");
+  console.log("Next step: complete the app's OAuth to the third-party provider in this");
+  console.log("environment. Use the Public URL as the redirect URI. Tokens stay here;");
+  console.log("a new orb must OAuth again before webhook follow-up will work.");
   console.log("");
   console.log("Press Ctrl+C to disconnect.");
 
@@ -80,22 +100,27 @@ async function main(): Promise<void> {
 
 function printUsage(): void {
   console.log(`Usage:
-  npx dev-router connect
+  npx dev-router connect --route nomads --local-url http://127.0.0.1:3000
   npx dev-router connect --route my-web-app --port 3000
+  npx dev-router connect --target https://abc123.cloud-dev.example
 
-The client detects this environment's public URL automatically.
-If nothing is detected, it uses https://dev-router-test.example so you can
-exercise registration locally. That target will not receive real traffic.
+Reverse tunnel (--local-url) is the default for private cloud environments
+such as Amp orbs, Codespaces, Cursor, CI workers, and containers. The sidecar
+opens an outbound WebSocket and forwards requests to the local HTTP server.
+
+Public-target (--target / PUBLIC_DEV_URL) remains available when the
+environment already has a public https:// origin the Worker can fetch.
+
 route is optional. When omitted, traffic is accepted at the router root
 (https://dev-webhooks.example.com/*) with no project prefix.
-Use --route only when you want a path prefix for this project.
 
 Environment:
-  DEV_ROUTER_URL      Shared router base URL
-  DEV_ROUTER_SECRET   Management bearer secret
-  DEV_ROUTER_ROUTE    Optional public path prefix for this project
-  DEV_ROUTER_PORT     Local app port used when constructing the detected URL (default 3000)
-  PUBLIC_DEV_URL      Optional override for the environment's public URL`);
+  DEV_ROUTER_URL        Shared router base URL
+  DEV_ROUTER_SECRET     Management bearer secret
+  DEV_ROUTER_ROUTE      Optional public path prefix for this project
+  DEV_ROUTER_PORT       Local app port used when constructing a detected URL (default 3000)
+  DEV_ROUTER_LOCAL_URL  Local HTTP origin for reverse-tunnel mode
+  PUBLIC_DEV_URL        Optional public https:// origin (public-target transport)`);
 }
 
 main().catch((error: unknown) => {

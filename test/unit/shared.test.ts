@@ -7,6 +7,7 @@ import {
   joinTargetUrl,
   remainingPathFromPublicUrl,
   shouldForwardHeader,
+  validateLocalUrl,
   validateTargetBaseUrl
 } from "../../src/shared";
 
@@ -33,6 +34,23 @@ describe("validateTargetBaseUrl", () => {
     expect(() =>
       validateTargetBaseUrl("https://user:pass@abc123.cloud-dev.example")
     ).toThrow(/credentials/);
+  });
+});
+
+describe("validateLocalUrl", () => {
+  it("accepts loopback http URLs", () => {
+    expect(validateLocalUrl("http://127.0.0.1:3000")).toBe("http://127.0.0.1:3000/");
+  });
+
+  it("accepts private docker hostnames", () => {
+    expect(validateLocalUrl("http://host.docker.internal:5173")).toBe(
+      "http://host.docker.internal:5173/"
+    );
+  });
+
+  it("rejects credentials and fragments", () => {
+    expect(() => validateLocalUrl("http://user:pass@127.0.0.1:3000")).toThrow(/credentials/);
+    expect(() => validateLocalUrl("http://127.0.0.1:3000/#x")).toThrow(/fragment/);
   });
 });
 

@@ -6,7 +6,8 @@ export default defineConfig([
     format: ["esm"],
     dts: true,
     clean: true,
-    splitting: false
+    splitting: false,
+    external: ["ws"]
   },
   {
     entry: { cli: "src/cli.ts" },
@@ -14,6 +15,7 @@ export default defineConfig([
     dts: false,
     clean: false,
     splitting: false,
-    banner: { js: "#!/usr/bin/env node" }
+    banner: { js: "#!/usr/bin/env node" },
+    external: ["ws"]
   }
 ]);

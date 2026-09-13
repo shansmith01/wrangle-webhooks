@@ -17,6 +17,8 @@
     "src/dashboard.ts",
     "src/forward.ts",
     "src/auth.ts",
+    "src/oauth-state.ts",
+    "src/tunnel-protocol.ts",
     "src/types.ts",
     "src/shared.ts",
     "worker-configuration.d.ts",

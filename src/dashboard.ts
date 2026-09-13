@@ -141,12 +141,13 @@ export function dashboardHtml(status: DashboardStatus): string {
         const rows = route.subscribers.map((sub) => \`
           <tr>
             <td><code>\${esc(sub.id)}</code></td>
+            <td>\${esc(sub.transport || "public")}</td>
             <td><code>\${esc(sub.targetBaseUrl)}</code></td>
             <td>\${fmt(sub.lastHeartbeatAt)}</td>
             <td>\${fmt(sub.expiresAt)}</td>
           </tr>\`).join("");
         return \`<div class="card route"><h2>\${esc(route.publicPath)}</h2>
-          <table><thead><tr><th>Subscriber</th><th>Target</th><th>Last heartbeat</th><th>Expires</th></tr></thead>
+          <table><thead><tr><th>Subscriber</th><th>Transport</th><th>Target</th><th>Last heartbeat</th><th>Expires</th></tr></thead>
           <tbody>\${rows}</tbody></table></div>\`;
       }).join("");
     }
@@ -178,6 +179,7 @@ function renderRoutes(routes: DashboardRoute[]): string {
         .map(
           (sub) => `<tr>
             <td><code>${escapeHtml(sub.id)}</code></td>
+            <td>${escapeHtml(sub.transport)}</td>
             <td><code>${escapeHtml(sub.targetBaseUrl)}</code></td>
             <td>${escapeHtml(new Date(sub.lastHeartbeatAt).toISOString())}</td>
             <td>${escapeHtml(new Date(sub.expiresAt).toISOString())}</td>
@@ -185,7 +187,7 @@ function renderRoutes(routes: DashboardRoute[]): string {
         )
         .join("");
       return `<div class="card route"><h2>${escapeHtml(route.publicPath)}</h2>
-        <table><thead><tr><th>Subscriber</th><th>Target</th><th>Last heartbeat</th><th>Expires</th></tr></thead>
+        <table><thead><tr><th>Subscriber</th><th>Transport</th><th>Target</th><th>Last heartbeat</th><th>Expires</th></tr></thead>
         <tbody>${rows}</tbody></table></div>`;
     })
     .join("");

@@ -15,7 +15,8 @@ describe("DevRouterClient", () => {
         return Response.json({
           subscriberId: "sub_abc123",
           routeId: "my-web-app",
-          expiresIn: 300
+          expiresIn: 300,
+          forwardToken: "ft_testtoken"
         });
       }
       if (url.includes("/heartbeat")) {
@@ -26,6 +27,7 @@ describe("DevRouterClient", () => {
         });
       }
       if (init?.method === "DELETE") {
+        expect(init.signal?.aborted).not.toBe(true);
         return new Response(null, { status: 204 });
       }
       return new Response("not found", { status: 404 });
@@ -42,6 +44,8 @@ describe("DevRouterClient", () => {
     });
 
     expect(connection.subscriberId).toBe("sub_abc123");
+    expect(connection.forwardToken).toBe("ft_testtoken");
+    expect(connection.transport).toBe("public");
     expect(connection.publicUrl).toBe("https://dev-webhooks.example.com/my-web-app/*");
     expect(fetchMock).toHaveBeenCalledTimes(1);
     const firstCall = fetchMock.mock.calls[0];
@@ -92,7 +96,8 @@ describe("DevRouterClient", () => {
         return Response.json({
           subscriberId: "sub_abc123",
           routeId: "",
-          expiresIn: 300
+          expiresIn: 300,
+          forwardToken: "ft_testtoken"
         });
       }
       return new Response(null, { status: 204 });
@@ -113,5 +118,18 @@ describe("DevRouterClient", () => {
       "https://dev-webhooks.example.com/_router/subscribers"
     );
     await connection.disconnect();
+  });
+
+  it("rejects localUrl and targetBaseUrl together", async () => {
+    const client = new DevRouterClient({
+      routerUrl: "https://dev-webhooks.example.com",
+      secret: "test-secret"
+    });
+    await expect(
+      client.connect({
+        localUrl: "http://127.0.0.1:3000",
+        targetBaseUrl: "https://abc123.cloud-dev.example"
+      })
+    ).rejects.toThrow(/mutually exclusive/);
   });
 });

@@ -1,7 +1,11 @@
-import { requireManagementAuth, unauthorized } from "./auth";
+import { requireManagementAuth, timingSafeEqualString, unauthorized } from "./auth";
 import { dashboardHtml, dashboardStatus, type DashboardRoute } from "./dashboard";
 import { RouteDurableObject } from "./durable-object";
-import { fanOutToSubscribers } from "./forward";
+import {
+  classifyDelivery,
+  parseFormBody,
+  readOAuthState
+} from "./oauth-state";
 import { RouterIndex } from "./router-index";
 import {
   TargetBaseUrlError,
@@ -12,6 +16,14 @@ import {
   remainingPathFromPublicUrl,
   validateTargetBaseUrl
 } from "./shared";
+import {
+  decodeBody,
+  decodeTunnelSubprotocolSecret,
+  encodeBody,
+  routeIdFromTunnelPath,
+  serializeHeaders
+} from "./tunnel-protocol";
+import type { IngressPayload } from "./types";
 
 export { RouteDurableObject, RouterIndex };
 
@@ -19,9 +31,13 @@ const REGISTER = /^\/_router\/routes\/([^/]+)\/subscribers$/;
 const HEARTBEAT =
   /^\/_router\/routes\/([^/]+)\/subscribers\/([^/]+)\/heartbeat$/;
 const DEREGISTER = /^\/_router\/routes\/([^/]+)\/subscribers\/([^/]+)$/;
+const OAUTH_BIND = /^\/_router\/routes\/([^/]+)\/subscribers\/([^/]+)\/oauth-states$/;
 const DEFAULT_REGISTER = /^\/_router\/subscribers$/;
 const DEFAULT_HEARTBEAT = /^\/_router\/subscribers\/([^/]+)\/heartbeat$/;
 const DEFAULT_DEREGISTER = /^\/_router\/subscribers\/([^/]+)$/;
+const DEFAULT_OAUTH_BIND = /^\/_router\/subscribers\/([^/]+)\/oauth-states$/;
+const DEFAULT_TUNNEL = /^\/_router\/tunnel$/;
+const NAMED_TUNNEL = /^\/_router\/routes\/([^/]+)\/tunnel$/;
 
 export default {
   async fetch(request, env, ctx): Promise<Response> {
@@ -44,8 +60,22 @@ async function handleManagement(
   if (!env.DEV_ROUTER_SECRET) {
     return Response.json({ error: "server_misconfigured" }, { status: 500 });
   }
-  if (!requireManagementAuth(request, env.DEV_ROUTER_SECRET)) {
+  const isTunnelPath =
+    NAMED_TUNNEL.test(url.pathname) || DEFAULT_TUNNEL.test(url.pathname);
+  if (isTunnelPath) {
+    if (!authorizeManagement(request, env.DEV_ROUTER_SECRET)) {
+      return unauthorized();
+    }
+  } else if (!requireManagementAuth(request, env.DEV_ROUTER_SECRET)) {
     return unauthorized();
+  }
+
+  const namedTunnel = url.pathname.match(NAMED_TUNNEL);
+  if (namedTunnel) {
+    return handleTunnel(request, env, decodeURIComponent(namedTunnel[1]));
+  }
+  if (DEFAULT_TUNNEL.test(url.pathname)) {
+    return handleTunnel(request, env, "");
   }
 
   const defaultRegister = url.pathname.match(DEFAULT_REGISTER);
@@ -56,6 +86,11 @@ async function handleManagement(
   const defaultHeartbeat = url.pathname.match(DEFAULT_HEARTBEAT);
   if (defaultHeartbeat && request.method === "POST") {
     return heartbeatSubscriber(env, "", decodeURIComponent(defaultHeartbeat[1]));
+  }
+
+  const defaultOAuthBind = url.pathname.match(DEFAULT_OAUTH_BIND);
+  if (defaultOAuthBind && request.method === "POST") {
+    return bindOAuthState(request, env, "", decodeURIComponent(defaultOAuthBind[1]));
   }
 
   const registerMatch = url.pathname.match(REGISTER);
@@ -69,6 +104,16 @@ async function handleManagement(
       env,
       decodeURIComponent(heartbeatMatch[1]),
       decodeURIComponent(heartbeatMatch[2])
+    );
+  }
+
+  const oauthBindMatch = url.pathname.match(OAUTH_BIND);
+  if (oauthBindMatch && request.method === "POST") {
+    return bindOAuthState(
+      request,
+      env,
+      decodeURIComponent(oauthBindMatch[1]),
+      decodeURIComponent(oauthBindMatch[2])
     );
   }
 
@@ -87,6 +132,34 @@ async function handleManagement(
   }
 
   return Response.json({ error: "not_found" }, { status: 404 });
+}
+
+function authorizeManagement(request: Request, secret: string): boolean {
+  if (requireManagementAuth(request, secret)) {
+    return true;
+  }
+  const fromProtocol = decodeTunnelSubprotocolSecret(
+    request.headers.get("Sec-WebSocket-Protocol")
+  );
+  return fromProtocol !== null && timingSafeEqualString(fromProtocol, secret);
+}
+
+async function handleTunnel(
+  request: Request,
+  env: Env,
+  routeId: string
+): Promise<Response> {
+  if (!isAllowedRouteId(routeId)) {
+    return Response.json({ error: "invalid_route_id" }, { status: 400 });
+  }
+  if (request.headers.get("Upgrade")?.toLowerCase() !== "websocket") {
+    return Response.json({ error: "expected_websocket" }, { status: 426 });
+  }
+  if (routeIdFromTunnelPath(new URL(request.url).pathname) === null) {
+    return Response.json({ error: "invalid_tunnel_path" }, { status: 400 });
+  }
+  const stub = env.ROUTE.getByName(durableObjectNameForRoute(routeId));
+  return stub.fetch(request);
 }
 
 async function registerSubscriber(
@@ -129,12 +202,13 @@ async function registerSubscriber(
   }
 
   const stub = env.ROUTE.getByName(durableObjectNameForRoute(routeId));
-  const result = await stub.register(targetBaseUrl);
+  const result = await stub.register(targetBaseUrl, routeId);
   await indexStub(env).addRoute(routeId);
   return Response.json({
     subscriberId: result.subscriberId,
     routeId,
-    expiresIn: result.expiresIn
+    expiresIn: result.expiresIn,
+    forwardToken: result.forwardToken
   });
 }
 
@@ -156,6 +230,37 @@ async function heartbeatSubscriber(
     routeId,
     expiresIn: result.expiresIn
   });
+}
+
+async function bindOAuthState(
+  request: Request,
+  env: Env,
+  routeId: string,
+  subscriberId: string
+): Promise<Response> {
+  if (!isAllowedRouteId(routeId)) {
+    return Response.json({ error: "invalid_route_id" }, { status: 400 });
+  }
+  let payload: unknown;
+  try {
+    payload = await request.json();
+  } catch {
+    return Response.json({ error: "invalid_json" }, { status: 400 });
+  }
+  const state =
+    payload &&
+    typeof payload === "object" &&
+    "state" in payload &&
+    typeof payload.state === "string"
+      ? payload.state
+      : "";
+  const stub = env.ROUTE.getByName(durableObjectNameForRoute(routeId));
+  const result = await stub.bindOAuthState(subscriberId, state);
+  if (!result.ok) {
+    const status = result.error === "subscriber_not_found" ? 404 : 400;
+    return Response.json({ error: result.error }, { status });
+  }
+  return Response.json({ ok: true });
 }
 
 async function deregisterSubscriber(
@@ -235,29 +340,63 @@ async function handlePublic(
   }
 
   const body = await request.arrayBuffer();
+  const form = parseFormBody(request.headers.get("content-type"), body);
   const requestId = `req_${crypto.randomUUID().replaceAll("-", "").slice(0, 12)}`;
-  const publicHost = url.host;
-  const publicProto = url.protocol.replace(":", "") || "https";
-  const clientIp = request.headers.get("CF-Connecting-IP");
+  const payload: IngressPayload = {
+    remainingPath: resolved.remainingPath,
+    search: url.search,
+    method: request.method,
+    headerPairs: serializeHeaders(request.headers),
+    bodyBase64: encodeBody(body),
+    requestId,
+    publicHost: url.host,
+    publicProto: url.protocol.replace(":", "") || "https",
+    clientIp: request.headers.get("CF-Connecting-IP"),
+    oauthState: readOAuthState(url.search, form)
+  };
 
-  ctx.waitUntil(
-    fanOutToSubscribers({
-      subscribers: resolved.subscribers,
-      remainingPath: resolved.remainingPath,
-      search: url.search,
-      method: request.method,
-      body,
-      incomingHeaders: request.headers,
-      routeId: resolved.routeId,
-      requestId,
-      publicHost,
-      publicProto,
-      clientIp,
-      routerSecret: env.DEV_ROUTER_SECRET
-    })
-  );
+  const stub = env.ROUTE.getByName(durableObjectNameForRoute(resolved.routeId));
+  const delivery = classifyDelivery({
+    remainingPath: resolved.remainingPath,
+    search: url.search,
+    form
+  });
 
+  if (delivery === "oauth") {
+    return proxyResultToResponse(await stub.proxyOAuth(payload));
+  }
+
+  ctx.waitUntil(stub.fanOut(payload));
   return Response.json({ accepted: true }, { status: 202 });
+}
+
+function proxyResultToResponse(result: {
+  kind: "proxy" | "error";
+  status: number;
+  headers?: string[][];
+  bodyBase64?: string;
+  error?: string;
+  message?: string;
+}): Response {
+  if (result.kind === "error") {
+    return Response.json(
+      { error: result.error, ...(result.message ? { message: result.message } : {}) },
+      { status: result.status }
+    );
+  }
+  const headers = new Headers();
+  for (const pair of result.headers ?? []) {
+    const name = pair[0];
+    const value = pair[1];
+    if (name && value !== undefined) {
+      headers.append(name, value);
+    }
+  }
+  const body = decodeBody(result.bodyBase64);
+  return new Response(body, {
+    status: result.status,
+    headers
+  });
 }
 
 async function resolvePublicRoute(

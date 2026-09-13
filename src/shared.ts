@@ -1,11 +1,12 @@
 export const HEARTBEAT_INTERVAL_MS = 60_000;
 export const SUBSCRIBER_TTL_MS = 300_000;
 export const DELIVERY_TIMEOUT_MS = 10_000;
+export const DEREGISTER_TIMEOUT_MS = 5_000;
 
 export const ROUTER_HEADER_ROUTE = "X-Dev-Router-Route";
 export const ROUTER_HEADER_SUBSCRIBER = "X-Dev-Router-Subscriber";
 export const ROUTER_HEADER_REQUEST_ID = "X-Dev-Router-Request-Id";
-export const ROUTER_HEADER_SECRET = "X-Dev-Router-Secret";
+export const ROUTER_HEADER_TOKEN = "X-Dev-Router-Token";
 
 const HOP_BY_HOP_HEADERS = new Set([
   "connection",
@@ -27,6 +28,13 @@ export class TargetBaseUrlError extends Error {
   }
 }
 
+export class LocalUrlError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "LocalUrlError";
+  }
+}
+
 export function validateTargetBaseUrl(value: string): string {
   let url: URL;
   try {
@@ -43,6 +51,27 @@ export function validateTargetBaseUrl(value: string): string {
   }
   if (url.hash) {
     throw new TargetBaseUrlError("targetBaseUrl must not contain a fragment");
+  }
+
+  return url.toString();
+}
+
+export function validateLocalUrl(value: string): string {
+  let url: URL;
+  try {
+    url = new URL(value);
+  } catch {
+    throw new LocalUrlError("localUrl must be an absolute URL");
+  }
+
+  if (url.protocol !== "http:" && url.protocol !== "https:") {
+    throw new LocalUrlError("localUrl must use http:// or https://");
+  }
+  if (url.username || url.password) {
+    throw new LocalUrlError("localUrl must not contain credentials");
+  }
+  if (url.hash) {
+    throw new LocalUrlError("localUrl must not contain a fragment");
   }
 
   return url.toString();

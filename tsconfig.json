@@ -10,5 +10,18 @@
     "verbatimModuleSyntax": true,
     "types": ["node"]
   },
-  "include": ["src/client.ts", "src/cli.ts", "src/cli-command.ts", "src/types.ts", "src/shared.ts", "src/detect-url.ts", "test/unit/**/*.ts"]
+  "include": [
+    "src/client.ts",
+    "src/cli.ts",
+    "src/cli-command.ts",
+    "src/types.ts",
+    "src/shared.ts",
+    "src/detect-url.ts",
+    "src/oauth-state.ts",
+    "src/tunnel-protocol.ts",
+    "src/tunnel-client.ts",
+    "src/management-fetch.ts",
+    "src/wait-for-shutdown.ts",
+    "test/unit/**/*.ts"
+  ]
 }

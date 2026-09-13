@@ -4,7 +4,7 @@
 
 Shared Cloudflare ingress for ephemeral cloud development environments. Deploy the Worker once, then install the npm client in any project that needs a **stable public URL**.
 
-Webhook providers, OAuth apps, and other external services call the Worker. The Worker fans the request out to whichever cloud environments are currently registered. The npm client is a sidecar: it only registers, heartbeats, and deregisters. It does not proxy HTTP.
+Webhook providers, OAuth apps, and other external services call the Worker. The default transport is a **reverse tunnel**: the sidecar opens an outbound WebSocket and forwards each request to a local HTTP server. Public-target forwarding remains available for environments that already have a public `https://` origin.
 
 ```text
 External service
@@ -15,11 +15,9 @@ https://dev-webhooks.example.com[/<routeId>]/<any-path>
       v
 Shared Cloudflare Worker + Durable Object
       |
-      +--> Dev Environment A  (public https:// origin)
-      +--> Dev Environment B
+      +--> reverse tunnel (WebSocket) --> http://127.0.0.1:3000  (Amp, orbs, CI, VMs)
+      +--> optional public https:// origin
 ```
-
-The router is generic. It does not distinguish webhooks, OAuth callbacks, or any other HTTP request.
 
 `routeId` is an optional public path prefix, not a private identifier:
 
@@ -27,6 +25,8 @@ The router is generic. It does not distinguish webhooks, OAuth callbacks, or any
 - `my-web-app` → `https://dev-webhooks.example.com/my-web-app/oauth/callback`
 
 If a named route has active subscribers, it wins for that prefix. Otherwise an empty-route subscriber receives the full path.
+
+Webhooks fan out to every subscriber. OAuth callbacks are routed to **one** subscriber and that subscriber’s response is returned to the public caller.
 
 ## Two packages of work
 
@@ -41,16 +41,9 @@ Management endpoints require `Authorization: Bearer <secret>`. Store that value 
 
 ## Use the client in a remote cloud environment
 
-The Worker delivers traffic with `fetch()` from Cloudflare to `targetBaseUrl`. That URL must be:
+Amp orbs, Codespaces, Cursor, CI workers, containers, and private VMs use the same local URL interface. The sidecar runs **in** the environment and fetches `localUrl` itself. The Worker never needs that address.
 
-- absolute `https://` (not `http://`, not `localhost`)
-- reachable **from the public internet** (Cloudflare’s network), not only from your laptop or an IDE preview
-- free of username/password and fragments
-- a base origin or origin plus path (`https://host` or `https://host/dev-ingress`)
-
-Desktop and many “cloud agent” previews only **port-forward to localhost on your machine**. That is useful for you in a browser. It is **not** a target the Worker can call.
-
-### 1. Configure the sidecar
+### Reverse tunnel (recommended)
 
 ```bash
 npm install -D @powerboard/dev-router
@@ -58,14 +51,9 @@ npm install -D @powerboard/dev-router
 export DEV_ROUTER_URL=https://dev-webhooks.example.com
 export DEV_ROUTER_SECRET=<same secret as the Worker>
 # optional:
-export DEV_ROUTER_ROUTE=my-web-app
-export DEV_ROUTER_PORT=3000
-```
+export DEV_ROUTER_ROUTE=nomads
 
-Run the sidecar next to the app (same machine / same VM):
-
-```bash
-npx dev-router connect
+npx dev-router connect --route nomads --local-url http://127.0.0.1:3000
 ```
 
 Or from `package.json`:
@@ -73,54 +61,41 @@ Or from `package.json`:
 ```json
 {
   "scripts": {
-    "dev": "concurrently \"npm run dev:app\" \"dev-router connect\""
+    "dev": "concurrently \"npm run dev:app\" \"dev-router connect --local-url http://127.0.0.1:3000\""
   }
 }
 ```
 
-The CLI prints `Public:` (give this URL to webhook/OAuth providers) and `Forwarding to:` (must be the environment’s public HTTPS origin).
+The CLI prints `Public:` (give this URL to webhook/OAuth providers) and `Forwarding to:` (the local origin the sidecar fetches). It also reminds you that **replica mode** is not finished until this environment completes the app’s OAuth to the third-party provider.
+
+Each new cloud environment is a full replica. After `connect`, the first operator action is: open the app **in this environment** and finish OAuth. Do that after the sidecar is up (otherwise the callback is `404`). Tokens stay in this environment; the next orb repeats OAuth. Webhook fan-out is only useful for replicas that already have those tokens.
 
 One-shot without adding a dependency:
 
 ```bash
-npx --yes @powerboard/dev-router connect
+npx --yes @powerboard/dev-router connect --route nomads --local-url http://127.0.0.1:3000
 ```
 
 Do not run `npx dev-router` in a project that has not installed this package. npm will look up an unrelated public package named `dev-router`. Prefer `npx --yes @powerboard/dev-router connect` or install first.
 
-### 2. Give the Worker a reachable HTTPS origin
+`--local-url` can be any origin the sidecar can fetch (`http://127.0.0.1:3000`, `http://app:3000`, `http://host.docker.internal:5173`). It does not need to be loopback, and it does not need to be reachable from Cloudflare.
 
-Bind the app to `0.0.0.0` and the port you register (`PORT` / `DEV_ROUTER_PORT` / `--port`, default `3000`). Then expose that port on a public HTTPS hostname.
+The client heartbeats over the WebSocket, reconnects with backoff, and on SIGINT/SIGTERM closes the socket **before** aborting other work so deregistration is not skipped. Disconnected tunnel subscribers are removed immediately.
 
-| Environment | Auto-detect? | What to do |
-| --- | --- | --- |
-| **GitHub Codespaces** | Yes (`CODESPACE_NAME` + port-forwarding domain) | Forward the app port and set visibility to **public**. Private ports are not reachable from Cloudflare. |
-| **Gitpod** | Yes (`GITPOD_WORKSPACE_URL`) | Use the generated `https://<port>-<workspace-host>` URL; keep the port open. |
-| **Replit** | Yes (`REPLIT_DEV_DOMAIN`) | Use the Replit dev domain as-is. |
-| **VS Code / Cursor tunnels** | Yes when `VSCODE_PROXY_URI` is set | Use the tunnel URL for that port. Confirm it loads from a phone or `curl` off your LAN, not only the IDE preview. |
-| **Cursor Cloud Agents** | No | Port-forward to your laptop is not enough. Publish an ingress-reachable HTTPS URL (Codespaces-style public port, named Cloudflare Tunnel, or `cloudflared tunnel --url http://127.0.0.1:<port>`), then set `PUBLIC_DEV_URL` / `--target` to that `https://` origin. Store `DEV_ROUTER_URL` and `DEV_ROUTER_SECRET` as Cloud Agent secrets. If the agent uses an egress allowlist, allow the Worker hostname so register/heartbeat can reach it. |
-| **Render, Fly, Railway, generic VM** | No | Set `PUBLIC_DEV_URL` to the service’s existing public `https://` origin (the router still gives you a **stable** hostname while that origin may change). Bind HTTP to `0.0.0.0:$PORT`. |
-| **Laptop / no detector** | Fallback only | Detection falls back to `https://dev-router-test.example`, which **will not receive traffic**. Run a tunnel (for example Cloudflare Quick Tunnels) and pass `--target`. |
+### Optional public-target transport
 
-Detection order: `VSCODE_PROXY_URI`, then GitHub Codespaces, then Gitpod, then Replit. Port comes from `--port`, `DEV_ROUTER_PORT`, `PORT`, then `3000`.
-
-Override whenever detection is wrong or missing:
+If the environment already has a public `https://` origin, you can still register that URL instead of opening a tunnel:
 
 ```bash
-npx dev-router connect --port 5173 --target https://abc123.cloud-dev.example
-```
-
-Quick Tunnel pattern (Cursor Cloud Agents, local laptops, locked-down VMs):
-
-```bash
-# App on 0.0.0.0:3000, then:
-npx --yes cloudflared tunnel --url http://127.0.0.1:3000
-# copy the https://*.trycloudflare.com URL
-export PUBLIC_DEV_URL=https://<random>.trycloudflare.com
+export PUBLIC_DEV_URL=https://abc123.cloud-dev.example
 npx dev-router connect --route my-web-app
 ```
 
-Heartbeats every 60 seconds keep the subscriber alive. Expiry is 5 minutes of silence. SIGINT/SIGTERM deregisters; TTL covers a failed DELETE.
+That origin must be absolute `https://`, reachable from Cloudflare, and free of credentials or a fragment. `http://localhost` and IDE-only port-forwards are not valid public targets — use `--local-url` instead.
+
+Detection order when `--local-url` and `--target` are omitted: `VSCODE_PROXY_URI`, GitHub Codespaces, Gitpod, Replit. Fallback is `https://dev-router-test.example`, which will not receive traffic.
+
+`--local-url` and `--target` are mutually exclusive.
 
 Programmatic equivalent:
 
@@ -134,9 +109,11 @@ const client = new DevRouterClient({
 
 const connection = await client.connect({
   routeId: process.env.DEV_ROUTER_ROUTE, // omit or "" for router root
-  targetBaseUrl: process.env.PUBLIC_DEV_URL, // omit to auto-detect
-  port: 3000
+  localUrl: process.env.DEV_ROUTER_LOCAL_URL ?? "http://127.0.0.1:3000"
 });
+
+const oauthState = await connection.wrapOAuthState();
+await connection.bindOAuthState(appGeneratedState);
 
 await connection.disconnect();
 ```
@@ -151,9 +128,13 @@ Task documentation and Agent Skills:
 
 ## Request forwarding (subscriber apps)
 
-The public caller always receives `202` `{ "accepted": true }` once subscribers exist. Subscriber status codes are not propagated. No subscribers → `404` `{ "error": "route_not_found" }`.
+**Webhooks** fan out to every subscriber. The public caller receives `202` `{ "accepted": true }`. Subscriber status codes are not propagated.
 
-Forwarded requests keep method, body, query string, and non-hop-by-hop headers, plus `X-Dev-Router-Route`, `X-Dev-Router-Subscriber`, `X-Dev-Router-Request-Id`, `X-Dev-Router-Secret` (treat as an internal hop credential), and `X-Forwarded-*` when a client IP exists. Each delivery has a 10s timeout and does not follow redirects.
+**OAuth** is single-target and returns the subscriber response (including redirects). Correlate with `connection.wrapOAuthState()` or `connection.bindOAuthState(state)`. If a route has exactly one subscriber, that subscriber is used. Multiple subscribers without a matching `state` return `409` `{ "error": "oauth_unroutable" }`.
+
+No subscribers → `404` `{ "error": "route_not_found" }`.
+
+Forwarded requests keep method, body, query string, and non-hop-by-hop headers, plus `X-Dev-Router-Route`, `X-Dev-Router-Subscriber`, `X-Dev-Router-Request-Id`, `X-Dev-Router-Token` (per-connection hop credential, not the management secret), and `X-Forwarded-*` when a client IP exists. The Worker does not send `X-Dev-Router-Secret`. Each delivery has a 10s timeout and does not follow redirects.
 
 ## Deploy the shared Worker
 
@@ -167,9 +148,9 @@ npx wrangler deploy
 npx wrangler secret put DEV_ROUTER_SECRET
 ```
 
-Bind a hostname such as `dev-webhooks.example.com` in the Cloudflare dashboard. Point every client at that origin with `DEV_ROUTER_URL`.
+Bind a hostname such as `dev-webhooks.example.com` in the Cloudflare dashboard. Point every client at that origin with `DEV_ROUTER_URL`. Clients need outbound HTTPS and WSS to that host.
 
-`GET /dashboard` and `GET /dashboard.json` are **public** status surfaces. They list active routes and subscriber counts. They do not return `DEV_ROUTER_SECRET`. Bearer auth applies only to `/_router/*`.
+`GET /dashboard` and `GET /dashboard.json` are **public** status surfaces. They list active routes, subscriber counts, and transport. They do not return `DEV_ROUTER_SECRET` or forward tokens. Bearer auth applies only to `/_router/*`.
 
 ## Agent Skills (TanStack Intent)
 

@@ -1,7 +1,7 @@
 {
   "name": "@powerboard/dev-router",
-  "version": "0.1.0",
-  "description": "Sidecar client for a shared Cloudflare ingress Worker: stable public URLs for ephemeral cloud development environments",
+  "version": "0.2.0",
+  "description": "Sidecar client for a shared Cloudflare ingress Worker: reverse tunnels and stable public URLs for ephemeral cloud development environments",
   "type": "module",
   "main": "./dist/client.js",
   "types": "./dist/client.d.ts",
@@ -38,7 +38,9 @@
     "skills:stale": "intent stale"
   },
   "intent": {
-    "skills": ["@powerboard/dev-router"],
+    "skills": [
+      "@powerboard/dev-router"
+    ],
     "exclude": []
   },
   "publishConfig": {
@@ -50,11 +52,13 @@
   },
   "dependencies": {
     "tsup": "^8.5.0",
-    "typescript": "^5.9.2"
+    "typescript": "^5.9.2",
+    "ws": "^8.21.3"
   },
   "devDependencies": {
     "@tanstack/intent": "^0.4.0",
-    "@types/node": "^24.5.2"
+    "@types/node": "^24.5.2",
+    "@types/ws": "^8.18.1"
   },
   "optionalDependencies": {
     "@cloudflare/vitest-pool-workers": "^0.12.4",

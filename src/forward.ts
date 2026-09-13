@@ -2,12 +2,18 @@ import {
   DELIVERY_TIMEOUT_MS,
   ROUTER_HEADER_REQUEST_ID,
   ROUTER_HEADER_ROUTE,
-  ROUTER_HEADER_SECRET,
   ROUTER_HEADER_SUBSCRIBER,
+  ROUTER_HEADER_TOKEN,
   joinTargetUrl,
   shouldForwardHeader
 } from "./shared";
-import type { Subscriber } from "./types";
+import {
+  TUNNEL_MAX_BODY_BYTES,
+  encodeBody,
+  serializeHeaders,
+  type HeaderPair
+} from "./tunnel-protocol";
+import type { ProxyResult, Subscriber } from "./types";
 
 export function buildForwardHeaders(options: {
   incoming: Headers;
@@ -17,7 +23,7 @@ export function buildForwardHeaders(options: {
   publicHost: string;
   publicProto: string;
   clientIp: string | null;
-  routerSecret: string;
+  forwardToken: string;
 }): Headers {
   const headers = new Headers();
   options.incoming.forEach((value, name) => {
@@ -29,7 +35,9 @@ export function buildForwardHeaders(options: {
   headers.set(ROUTER_HEADER_ROUTE, options.routeId);
   headers.set(ROUTER_HEADER_SUBSCRIBER, options.subscriberId);
   headers.set(ROUTER_HEADER_REQUEST_ID, options.requestId);
-  headers.set(ROUTER_HEADER_SECRET, options.routerSecret);
+  if (options.forwardToken) {
+    headers.set(ROUTER_HEADER_TOKEN, options.forwardToken);
+  }
   headers.set("X-Forwarded-Host", options.publicHost);
   headers.set("X-Forwarded-Proto", options.publicProto);
 
@@ -51,7 +59,7 @@ export async function deliverToSubscriber(options: {
   method: string;
   body: ArrayBuffer;
   headers: Headers;
-}): Promise<void> {
+}): Promise<Response> {
   const url = joinTargetUrl(
     options.subscriber.targetBaseUrl,
     options.remainingPath,
@@ -66,43 +74,26 @@ export async function deliverToSubscriber(options: {
   if (options.method !== "GET" && options.method !== "HEAD") {
     init.body = options.body;
   }
-  await fetch(url, init);
+  return fetch(url, init);
 }
 
-export async function fanOutToSubscribers(options: {
-  subscribers: Subscriber[];
-  remainingPath: string;
-  search: string;
-  method: string;
-  body: ArrayBuffer;
-  incomingHeaders: Headers;
-  routeId: string;
-  requestId: string;
-  publicHost: string;
-  publicProto: string;
-  clientIp: string | null;
-  routerSecret: string;
-}): Promise<void> {
-  await Promise.allSettled(
-    options.subscribers.map(async (subscriber) => {
-      const headers = buildForwardHeaders({
-        incoming: options.incomingHeaders,
-        routeId: options.routeId,
-        subscriberId: subscriber.id,
-        requestId: options.requestId,
-        publicHost: options.publicHost,
-        publicProto: options.publicProto,
-        clientIp: options.clientIp,
-        routerSecret: options.routerSecret
-      });
-      await deliverToSubscriber({
-        subscriber,
-        remainingPath: options.remainingPath,
-        search: options.search,
-        method: options.method,
-        body: options.body,
-        headers
-      });
-    })
-  );
+export async function captureSubscriberResponse(response: Response): Promise<ProxyResult> {
+  const body = await response.arrayBuffer();
+  if (body.byteLength > TUNNEL_MAX_BODY_BYTES) {
+    return {
+      kind: "error",
+      status: 502,
+      error: "subscriber_response_too_large"
+    };
+  }
+  return {
+    kind: "proxy",
+    status: response.status,
+    headers: filterResponseHeaders(serializeHeaders(response.headers)),
+    bodyBase64: encodeBody(body)
+  };
+}
+
+export function filterResponseHeaders(pairs: HeaderPair[]): HeaderPair[] {
+  return pairs.filter(([name]) => shouldForwardHeader(name));
 }

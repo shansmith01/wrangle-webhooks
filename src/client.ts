@@ -1,12 +1,18 @@
 import { detectPublicDevUrl } from "./detect-url";
+import { authorizedFetch } from "./management-fetch";
+import { wrapOAuthState } from "./oauth-state";
 import {
+  DEREGISTER_TIMEOUT_MS,
   HEARTBEAT_INTERVAL_MS,
   TargetBaseUrlError,
   isAllowedRouteId,
   managementSubscriberPath,
   publicIngressUrl,
+  validateLocalUrl,
   validateTargetBaseUrl
 } from "./shared";
+import { TunnelConnection } from "./tunnel-client";
+import { managementOAuthStatePath } from "./tunnel-protocol";
 import type {
   ConnectOptions,
   Connection,
@@ -16,6 +22,8 @@ import type {
 
 export { detectPublicDevUrl, resolveDevPort } from "./detect-url";
 export type { DetectedPublicUrl } from "./detect-url";
+export { wrapOAuthState } from "./oauth-state";
+export type { Connection, ConnectOptions, DevRouterClientOptions } from "./types";
 
 const MAX_RETRY_DELAY_MS = 30_000;
 
@@ -36,10 +44,24 @@ export class DevRouterClient {
 
   async connect(options: ConnectOptions = {}): Promise<Connection> {
     const routeId = resolveRouteId(options);
+    if (options.localUrl && options.targetBaseUrl) {
+      throw new Error("localUrl and targetBaseUrl are mutually exclusive");
+    }
+    if (options.localUrl) {
+      const connection = new TunnelConnection({
+        routerUrl: this.routerUrl,
+        secret: this.secret,
+        routeId,
+        localUrl: validateLocalUrl(options.localUrl)
+      });
+      await connection.start();
+      return connection;
+    }
+
     const targetBaseUrl = resolveTargetBaseUrl(options);
     validateTargetBaseUrl(targetBaseUrl);
 
-    const connection = new RouterConnection(this, {
+    const connection = new PublicConnection(this, {
       ...options,
       routeId,
       targetBaseUrl
@@ -49,14 +71,16 @@ export class DevRouterClient {
   }
 }
 
-class RouterConnection implements Connection {
+class PublicConnection implements Connection {
   subscriberId = "";
   readonly routeId: string;
   readonly targetBaseUrl: string;
   readonly publicUrl: string;
+  readonly transport = "public" as const;
+  forwardToken = "";
 
   private readonly client: DevRouterClient;
-  private readonly abort = new AbortController();
+  private readonly closed = new AbortController();
   private heartbeatTimer: ReturnType<typeof setTimeout> | undefined;
   private disconnected = false;
   private readonly onSignal = (): void => {
@@ -74,11 +98,9 @@ class RouterConnection implements Connection {
   }
 
   async start(): Promise<void> {
-    const registered = await retry(
-      () => this.register(),
-      this.abort.signal
-    );
+    const registered = await retry(() => this.register(), this.closed.signal);
     this.subscriberId = registered.subscriberId;
+    this.forwardToken = registered.forwardToken;
     this.scheduleHeartbeat();
     process.on("SIGINT", this.onSignal);
     process.on("SIGTERM", this.onSignal);
@@ -89,38 +111,61 @@ class RouterConnection implements Connection {
       return;
     }
     this.disconnected = true;
-    this.abort.abort();
     if (this.heartbeatTimer) {
       clearTimeout(this.heartbeatTimer);
     }
     process.off("SIGINT", this.onSignal);
     process.off("SIGTERM", this.onSignal);
-    if (!this.subscriberId) {
-      return;
+    if (this.subscriberId) {
+      try {
+        await this.request(managementSubscriberPath(this.routeId, this.subscriberId), {
+          method: "DELETE",
+          signal: AbortSignal.timeout(DEREGISTER_TIMEOUT_MS)
+        });
+      } catch {
+        // TTL cleanup handles a failed deregister.
+      }
     }
-    try {
-      await this.request(
-        managementSubscriberPath(this.routeId, this.subscriberId),
-        { method: "DELETE" }
-      );
-    } catch {
-      // TTL cleanup handles a failed deregister.
+    this.closed.abort();
+  }
+
+  async wrapOAuthState(inner?: string): Promise<string> {
+    return wrapOAuthState({
+      secret: this.client.secret,
+      subscriberId: this.subscriberId,
+      routeId: this.routeId,
+      inner
+    });
+  }
+
+  async bindOAuthState(state: string): Promise<void> {
+    const response = await this.request(
+      managementOAuthStatePath(this.routeId, this.subscriberId),
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ state })
+      }
+    );
+    if (!response.ok) {
+      throw new Error(`bindOAuthState failed: ${response.status}`);
     }
   }
 
   private async register(): Promise<RegisterSubscriberResponse> {
-    const response = await this.request(
-      managementSubscriberPath(this.routeId),
-      {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ targetBaseUrl: this.targetBaseUrl })
-      }
-    );
+    const response = await this.request(managementSubscriberPath(this.routeId), {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ targetBaseUrl: this.targetBaseUrl })
+    });
     if (!response.ok) {
       throw new RetryableError(`registration failed: ${response.status}`);
     }
-    return (await response.json()) as RegisterSubscriberResponse;
+    const payload = (await response.json()) as RegisterSubscriberResponse;
+    return {
+      ...payload,
+      forwardToken: payload.forwardToken ?? ""
+    };
   }
 
   private scheduleHeartbeat(): void {
@@ -142,6 +187,7 @@ class RouterConnection implements Connection {
       if (response.status === 404) {
         const registered = await this.register();
         this.subscriberId = registered.subscriberId;
+        this.forwardToken = registered.forwardToken;
       } else if (!response.ok) {
         throw new RetryableError(`heartbeat failed: ${response.status}`);
       }
@@ -159,12 +205,9 @@ class RouterConnection implements Connection {
   }
 
   private async request(path: string, init: RequestInit): Promise<Response> {
-    const headers = new Headers(init.headers);
-    headers.set("Authorization", `Bearer ${this.client.secret}`);
-    return fetch(`${this.client.routerUrl}${path}`, {
+    return authorizedFetch(this.client.routerUrl, this.client.secret, path, {
       ...init,
-      headers,
-      signal: this.abort.signal
+      signal: init.signal ?? this.closed.signal
     });
   }
 }
@@ -176,10 +219,7 @@ class RetryableError extends Error {
   }
 }
 
-async function retry<T>(
-  fn: () => Promise<T>,
-  signal: AbortSignal
-): Promise<T> {
+async function retry<T>(fn: () => Promise<T>, signal: AbortSignal): Promise<T> {
   let delay = 1_000;
   for (;;) {
     if (signal.aborted) {
