@@ -13,9 +13,9 @@ npm install -D @powerboard/dev-router
 
 ```bash
 export DEV_ROUTER_URL=https://dev-webhooks.example.com
-export DEV_ROUTER_SECRET=<secret>
+export DEV_ROUTER_SECRET=<route credential>
 
-npx dev-router connect --route nomads --local-url http://127.0.0.1:3000
+npx dev-router connect --route nomads --local-url http://127.0.0.1:3000 --environment-id "$AMP_THREAD_ID"
 ```
 
 After install, `npx dev-router` uses `node_modules/.bin/dev-router`. Do not run `npx dev-router` in a project that has not installed `@powerboard/dev-router` — npm will look up a different public package named `dev-router`.
@@ -27,6 +27,14 @@ npx --yes @powerboard/dev-router connect --route nomads --local-url http://127.0
 ```
 
 If `DEV_ROUTER_URL` or `DEV_ROUTER_SECRET` is missing, the CLI prints an error and exits.
+
+Mint a route credential from the operator secret so each project cannot join other routes:
+
+```bash
+npx dev-router token --route nomads
+```
+
+Give that value to orbs as `DEV_ROUTER_SECRET`. Keep the Worker operator secret off replica environments.
 
 `--route` / `DEV_ROUTER_ROUTE` is optional. Omit it to publish at the router root (`https://dev-webhooks.example.com/*`).
 
@@ -48,7 +56,15 @@ Run the sidecar **inside** the environment that serves the app. Bind the app to 
 npx dev-router connect --route nomads --local-url http://127.0.0.1:3000
 ```
 
-The same `--local-url` interface is used on Amp, Codespaces, Cursor, CI, containers, and private VMs. The Worker multiplexes public HTTP over the WebSocket. The client heartbeats with WebSocket `ping`/`pong`, reconnects with backoff, and closes the socket on SIGINT/SIGTERM so the subscriber is removed immediately.
+The same `--local-url` interface is used on Amp, Codespaces, Cursor, CI, containers, and private VMs. The Worker multiplexes public HTTP over the WebSocket. The client heartbeats with WebSocket `ping`/`pong`, reconnects with backoff, and closes the socket if a pong is missing for 75 seconds. SIGINT/SIGTERM closes the socket so anonymous subscribers are removed immediately. Pass `--environment-id` so reconnects reuse the same subscriber and keep pending OAuth bindings for five minutes.
+
+The sidecar also listens on loopback (`http://127.0.0.1:8790` by default):
+
+- `GET /ready` — Amp / process-manager readiness (`subscriberId`, `publicUrl`, `environmentId`)
+- `POST /oauth-states` `{ "state": "..." }` — bind this replica’s OAuth `state`
+- `POST /oauth-wrap` `{ "inner": "..." }` — wrap a nonce without importing router crypto
+
+The app process should call that control server. Do not run `DevRouterClient` inside the API. `--control-socket` uses a Unix socket. `--no-control` disables it.
 
 `--local-url` and `--target` are mutually exclusive.
 
@@ -61,7 +77,7 @@ Treat every new cloud environment as unsorted until the operator finishes the ap
 1. Start the app and `dev-router connect` (sidecar first, or the callback is `404`).
 2. Prompt the operator: the environment is subscribed; they still need to OAuth-register with the provider here.
 3. Use the printed `Public:` URL as the OAuth redirect URI, not `localhost`.
-4. If other replicas are already on the same route, the app must `wrapOAuthState()` or `bindOAuthState()` so this orb owns the authorization code.
+4. If other replicas are already on the same route, the app must bind `state` so this orb owns the authorization code: `POST http://127.0.0.1:8790/oauth-states` or `connection.bindOAuthState()` / `wrapOAuthState()` from the sidecar process.
 5. Store tokens in this environment. The next orb does not inherit them.
 
 Until step 4–5 succeed, do not tell the operator that webhooks are ready. Fan-out to an unauthenticated replica is failed follow-up calls.
@@ -98,7 +114,8 @@ const client = new DevRouterClient({
 
 const connection = await client.connect({
   routeId: "nomads",
-  localUrl: "http://127.0.0.1:3000"
+  localUrl: "http://127.0.0.1:3000",
+  environmentId: process.env.DEV_ROUTER_ENVIRONMENT_ID
 });
 
 const state = await connection.wrapOAuthState();
@@ -116,10 +133,14 @@ await connection.disconnect();
 | Name | Role |
 | --- | --- |
 | `DEV_ROUTER_URL` / `--url` | Shared router base URL |
-| `DEV_ROUTER_SECRET` / `--secret` | Management bearer secret |
+| `DEV_ROUTER_SECRET` / `--secret` | Operator secret or minted route credential |
 | `DEV_ROUTER_ROUTE` / `--route` | Optional public path prefix (`A-Za-z0-9._~-`, not `_router` or `dashboard`) |
 | `DEV_ROUTER_PORT` / `PORT` / `--port` | Local app port used when constructing a detected public URL (default `3000`) |
 | `DEV_ROUTER_LOCAL_URL` / `--local-url` | Local HTTP origin for reverse-tunnel mode |
+| `DEV_ROUTER_ENVIRONMENT_ID` / `--environment-id` | Stable subscriber identity across reconnects |
+| `DEV_ROUTER_CONTROL_PORT` / `--control-port` | Loopback control port (default `8790`) |
+| `DEV_ROUTER_CONTROL_SOCKET` / `--control-socket` | Unix socket instead of TCP |
+| `DEV_ROUTER_CONTROL_TOKEN` / `--control-token` | Optional bearer token for the control server |
 | `PUBLIC_DEV_URL` / `--target` | Optional public HTTPS origin (public-target transport) |
 
-Tunnel connections stay alive while the WebSocket is open and are removed as soon as it closes. Public-target subscribers heartbeat every 60 seconds and expire after 5 minutes of silence.
+Tunnel connections stay alive while the WebSocket is open. Anonymous tunnels are removed as soon as the socket closes. Environment-identified tunnels park for 5 minutes so OAuth bindings survive a reconnect. Public-target subscribers heartbeat every 60 seconds and expire after 5 minutes of silence. The Worker also expires stale tunnels that miss pings.

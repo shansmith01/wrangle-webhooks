@@ -2,6 +2,8 @@ export const HEARTBEAT_INTERVAL_MS = 60_000;
 export const SUBSCRIBER_TTL_MS = 300_000;
 export const DELIVERY_TIMEOUT_MS = 10_000;
 export const DEREGISTER_TIMEOUT_MS = 5_000;
+export const ENVIRONMENT_ID_MAX_LENGTH = 128;
+export const TUNNEL_STALE_MS = 90_000;
 
 export const ROUTER_HEADER_ROUTE = "X-Dev-Router-Route";
 export const ROUTER_HEADER_SUBSCRIBER = "X-Dev-Router-Subscriber";
@@ -95,6 +97,14 @@ export function durableObjectNameForIndex(): string {
 
 export function isAllowedRouteId(routeId: string): boolean {
   return routeId === "" || isValidRouteId(routeId);
+}
+
+export function isAllowedEnvironmentId(value: string): boolean {
+  return (
+    value.length > 0 &&
+    value.length <= ENVIRONMENT_ID_MAX_LENGTH &&
+    /^[A-Za-z0-9._~:@+-]+$/.test(value)
+  );
 }
 
 export function durableObjectNameForRoute(routeId: string): string {

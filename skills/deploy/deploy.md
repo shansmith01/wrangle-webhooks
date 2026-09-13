@@ -12,7 +12,7 @@ npx wrangler deploy
 npx wrangler secret put DEV_ROUTER_SECRET
 ```
 
-Management endpoints under `/_router/*` require `Authorization: Bearer <secret>` (tunnel upgrades may instead send the secret as a `dev-router.v1.` WebSocket subprotocol). Store that value as the Worker secret `DEV_ROUTER_SECRET`. Give clients the same value via `DEV_ROUTER_SECRET`. Do not commit `.dev.vars`.
+Management endpoints under `/_router/*` require a bearer credential. Store the **operator** secret as the Worker secret `DEV_ROUTER_SECRET`. Join (register / tunnel) also accepts a **route** credential derived from that operator secret. Mint one locally with `npx dev-router token --route nomads` (or `GET /_router/routes/nomads/credential` as the operator) and give orbs only that value. Subscriber heartbeat, OAuth bind, and DELETE require the operator secret or the per-connection token returned at connect — a route credential cannot bind or remove another replica. Tunnel upgrades may send the join credential as a `dev-router.v1.` WebSocket subprotocol. Do not commit `.dev.vars`.
 
 `wrangler.jsonc` names the Worker `dev-router`, enables `nodejs_compat` and observability, and binds two SQLite Durable Objects:
 
@@ -31,4 +31,4 @@ npm test
 npx wrangler dev
 ```
 
-The dashboard is public HTML at `/dashboard` and JSON at `/dashboard.json`. It lists active routes, subscriber counts, and transport (`public` or `tunnel`). It does not expose `DEV_ROUTER_SECRET` or per-connection forward tokens.
+The dashboard is public HTML at `/dashboard` and JSON at `/dashboard.json`. It lists active routes, subscriber counts, and transport (`public` or `tunnel`). It does not expose `DEV_ROUTER_SECRET`, route credentials, connection tokens, or per-connection forward tokens.

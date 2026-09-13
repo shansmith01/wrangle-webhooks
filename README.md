@@ -37,7 +37,9 @@ Webhooks fan out to every subscriber. OAuth callbacks are routed to **one** subs
 
 The published npm package is the **[client](https://www.npmjs.com/package/@powerboard/dev-router)**. The Worker source, Wrangler config, and Durable Objects live in this GitHub repository.
 
-Management endpoints require `Authorization: Bearer <secret>`. Store that value as the Worker secret `DEV_ROUTER_SECRET`. Give the same secret to clients as `DEV_ROUTER_SECRET`.
+Management endpoints require `Authorization: Bearer <secret>`. Store the **operator** secret as the Worker secret `DEV_ROUTER_SECRET`. Mint a **route** credential for each project (`npx dev-router token --route nomads`) and give that value to orbs as `DEV_ROUTER_SECRET`. Do not hand every environment the operator secret.
+
+## Use the client in a remote cloud environment
 
 ## Use the client in a remote cloud environment
 
@@ -49,11 +51,12 @@ Amp orbs, Codespaces, Cursor, CI workers, containers, and private VMs use the sa
 npm install -D @powerboard/dev-router
 
 export DEV_ROUTER_URL=https://dev-webhooks.example.com
-export DEV_ROUTER_SECRET=<same secret as the Worker>
+export DEV_ROUTER_SECRET=<route credential from `dev-router token --route nomads`>
 # optional:
 export DEV_ROUTER_ROUTE=nomads
+export DEV_ROUTER_ENVIRONMENT_ID=$AMP_THREAD_ID
 
-npx dev-router connect --route nomads --local-url http://127.0.0.1:3000
+npx dev-router connect --route nomads --local-url http://127.0.0.1:3000 --environment-id "$AMP_THREAD_ID"
 ```
 
 Or from `package.json`:
@@ -66,7 +69,20 @@ Or from `package.json`:
 }
 ```
 
-The CLI prints `Public:` (give this URL to webhook/OAuth providers) and `Forwarding to:` (the local origin the sidecar fetches). It also reminds you that **replica mode** is not finished until this environment completes the app’s OAuth to the third-party provider.
+The CLI prints `Public:` (give this URL to webhook/OAuth providers), `Forwarding to:` (the local origin the sidecar fetches), and `Control:` (`http://127.0.0.1:8790/ready`). It also reminds you that **replica mode** is not finished until this environment completes the app’s OAuth to the third-party provider.
+
+The app process should **not** import `DevRouterClient`. Bind OAuth `state` through the sidecar control server:
+
+```http
+POST http://127.0.0.1:8790/oauth-states
+Content-Type: application/json
+
+{"state":"<app-generated-state>"}
+```
+
+`GET /ready` is the Amp / process-manager readiness probe. `--control-socket` uses a Unix socket instead of TCP. `--no-control` disables the listener. The control server binds loopback only.
+
+`--environment-id` / `DEV_ROUTER_ENVIRONMENT_ID` keeps the same logical subscriber (and pending OAuth bindings) across WebSocket reconnects. Use a per-orb value such as `AMP_THREAD_ID`. A new process that reuses the same id replaces the old socket.
 
 Each new cloud environment is a full replica. After `connect`, the first operator action is: open the app **in this environment** and finish OAuth. Do that after the sidecar is up (otherwise the callback is `404`). Tokens stay in this environment; the next orb repeats OAuth. Webhook fan-out is only useful for replicas that already have those tokens.
 
@@ -80,7 +96,7 @@ Do not run `npx dev-router` in a project that has not installed this package. np
 
 `--local-url` can be any origin the sidecar can fetch (`http://127.0.0.1:3000`, `http://app:3000`, `http://host.docker.internal:5173`). It does not need to be loopback, and it does not need to be reachable from Cloudflare.
 
-The client heartbeats over the WebSocket, reconnects with backoff, and on SIGINT/SIGTERM closes the socket **before** aborting other work so deregistration is not skipped. Disconnected tunnel subscribers are removed immediately.
+The client heartbeats over the WebSocket, reconnects with backoff, and fails the socket if a pong is missing for 75 seconds. On SIGINT/SIGTERM it closes the socket **before** aborting other work. Anonymous tunnel subscribers are removed as soon as the socket closes. Environment-identified subscribers stay parked for five minutes so an in-flight OAuth callback can still be correlated after a reconnect. Stale tunnels with no ping are expired by the Worker.
 
 ### Optional public-target transport
 
@@ -109,7 +125,8 @@ const client = new DevRouterClient({
 
 const connection = await client.connect({
   routeId: process.env.DEV_ROUTER_ROUTE, // omit or "" for router root
-  localUrl: process.env.DEV_ROUTER_LOCAL_URL ?? "http://127.0.0.1:3000"
+  localUrl: process.env.DEV_ROUTER_LOCAL_URL ?? "http://127.0.0.1:3000",
+  environmentId: process.env.DEV_ROUTER_ENVIRONMENT_ID
 });
 
 const oauthState = await connection.wrapOAuthState();
@@ -130,7 +147,7 @@ Task documentation and Agent Skills:
 
 **Webhooks** fan out to every subscriber. The public caller receives `202` `{ "accepted": true }`. Subscriber status codes are not propagated.
 
-**OAuth** is single-target and returns the subscriber response (including redirects). Correlate with `connection.wrapOAuthState()` or `connection.bindOAuthState(state)`. If a route has exactly one subscriber, that subscriber is used. Multiple subscribers without a matching `state` return `409` `{ "error": "oauth_unroutable" }`.
+**OAuth** is single-target and returns the subscriber response (including redirects). Correlate with `wrapOAuthState()` / `bindOAuthState()` on the sidecar connection, or `POST http://127.0.0.1:8790/oauth-states` from the app process. If a route has exactly one subscriber, that subscriber is used. Multiple subscribers without a matching `state` return `409` `{ "error": "oauth_unroutable" }`.
 
 No subscribers → `404` `{ "error": "route_not_found" }`.
 
@@ -148,9 +165,9 @@ npx wrangler deploy
 npx wrangler secret put DEV_ROUTER_SECRET
 ```
 
-Bind a hostname such as `dev-webhooks.example.com` in the Cloudflare dashboard. Point every client at that origin with `DEV_ROUTER_URL`. Clients need outbound HTTPS and WSS to that host.
+Bind a hostname such as `dev-webhooks.example.com` in the Cloudflare dashboard. Point every client at that origin with `DEV_ROUTER_URL`. Mint route credentials with `npx dev-router token --route <routeId>` using the operator secret; give orbs only that route token. Clients need outbound HTTPS and WSS to that host.
 
-`GET /dashboard` and `GET /dashboard.json` are **public** status surfaces. They list active routes, subscriber counts, and transport. They do not return `DEV_ROUTER_SECRET` or forward tokens. Bearer auth applies only to `/_router/*`.
+`GET /dashboard` and `GET /dashboard.json` are **public** status surfaces. They list active routes, subscriber counts, and transport. They do not return `DEV_ROUTER_SECRET`, route credentials, connection tokens, or forward tokens. Bearer auth applies only to `/_router/*`.
 
 ## Agent Skills (TanStack Intent)
 

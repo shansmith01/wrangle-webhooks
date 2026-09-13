@@ -13,6 +13,7 @@ import {
   TUNNEL_PING,
   TUNNEL_PING_INTERVAL_MS,
   TUNNEL_PONG,
+  TUNNEL_PONG_DEADLINE_MS,
   decodeBody,
   encodeBody,
   headersFromPairs,
@@ -37,9 +38,12 @@ export class TunnelConnection implements Connection {
   readonly publicUrl: string;
   readonly transport = "tunnel" as const;
   forwardToken = "";
+  connectionToken = "";
+  readonly environmentId?: string;
 
   private readonly routerUrl: string;
   private readonly secret: string;
+  private lastPongAt = 0;
   private readonly closed = new AbortController();
   private disconnected = false;
   private socket: WebSocket | undefined;
@@ -57,12 +61,14 @@ export class TunnelConnection implements Connection {
     secret: string;
     routeId: string;
     localUrl: string;
+    environmentId?: string;
   }) {
     this.routerUrl = options.routerUrl;
     this.secret = options.secret;
     this.routeId = options.routeId;
     this.targetBaseUrl = options.localUrl;
     this.publicUrl = publicIngressUrl(options.routerUrl, options.routeId);
+    this.environmentId = options.environmentId;
     this.ready = new Promise<void>((resolve, reject) => {
       this.markReady = () => {
         if (this.readySettled) {
@@ -107,7 +113,7 @@ export class TunnelConnection implements Connection {
       try {
         await authorizedFetch(
           this.routerUrl,
-          this.secret,
+          this.connectionToken || this.secret,
           managementSubscriberPath(this.routeId, this.subscriberId),
           { method: "DELETE", signal: AbortSignal.timeout(DEREGISTER_TIMEOUT_MS) }
         );
@@ -131,7 +137,7 @@ export class TunnelConnection implements Connection {
   async bindOAuthState(state: string): Promise<void> {
     const response = await authorizedFetch(
       this.routerUrl,
-      this.secret,
+      this.connectionToken || this.secret,
       managementOAuthStatePath(this.routeId, this.subscriberId),
       {
         method: "POST",
@@ -163,7 +169,9 @@ export class TunnelConnection implements Connection {
   }
 
   private async openAndServe(): Promise<void> {
-    const url = toWebSocketUrl(`${this.routerUrl}${managementTunnelPath(this.routeId)}`);
+    const url = toWebSocketUrl(
+      `${this.routerUrl}${managementTunnelPath(this.routeId, this.environmentId)}`
+    );
     const socket = new WebSocket(url, [tunnelSubprotocol(this.secret)]);
     this.socket = socket;
     await waitForOpen(socket, this.closed.signal);
@@ -194,7 +202,11 @@ export class TunnelConnection implements Connection {
 
       const onMessage = (data: WebSocket.RawData): void => {
         const text = rawToString(data);
-        if (text === TUNNEL_PING || text === TUNNEL_PONG) {
+        if (text === TUNNEL_PONG) {
+          this.lastPongAt = Date.now();
+          return;
+        }
+        if (text === TUNNEL_PING) {
           return;
         }
         try {
@@ -204,6 +216,7 @@ export class TunnelConnection implements Connection {
           }
           this.subscriberId = parsed.subscriberId;
           this.forwardToken = parsed.forwardToken;
+          this.connectionToken = parsed.connectionToken ?? "";
           cleanup();
           resolve();
         } catch {
@@ -255,7 +268,11 @@ export class TunnelConnection implements Connection {
   }
 
   private async handleMessage(socket: WebSocket, text: string): Promise<void> {
-    if (text === TUNNEL_PING || text === TUNNEL_PONG) {
+    if (text === TUNNEL_PONG) {
+      this.lastPongAt = Date.now();
+      return;
+    }
+    if (text === TUNNEL_PING) {
       return;
     }
     let parsed: unknown;
@@ -320,9 +337,20 @@ export class TunnelConnection implements Connection {
 
   private startPing(socket: WebSocket): void {
     this.clearPing();
+    this.lastPongAt = Date.now();
+    let ticks = 0;
     this.pingTimer = setInterval(() => {
-      if (socket.readyState === WebSocket.OPEN) {
-        socket.send(TUNNEL_PING);
+      if (socket.readyState !== WebSocket.OPEN) {
+        return;
+      }
+      if (Date.now() - this.lastPongAt > TUNNEL_PONG_DEADLINE_MS) {
+        socket.terminate();
+        return;
+      }
+      socket.send(TUNNEL_PING);
+      ticks += 1;
+      if (ticks % 2 === 0) {
+        socket.send(JSON.stringify({ type: "heartbeat" }));
       }
     }, TUNNEL_PING_INTERVAL_MS);
     this.pingTimer.unref?.();

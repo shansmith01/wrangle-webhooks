@@ -82,6 +82,19 @@ export async function wrapOAuthState(options: {
   return `${OAUTH_STATE_PREFIX}${encoded}.${mac}`;
 }
 
+export async function unwrapOAuthStateForRoute(options: {
+  operatorSecret: string;
+  routeSecret: string;
+  state: string;
+  now?: number;
+}): Promise<SignedOAuthState | null> {
+  const primary = await unwrapOAuthState(options.operatorSecret, options.state, options.now);
+  if (primary) {
+    return primary;
+  }
+  return unwrapOAuthState(options.routeSecret, options.state, options.now);
+}
+
 export async function unwrapOAuthState(
   secret: string,
   state: string,

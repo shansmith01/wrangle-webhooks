@@ -1,7 +1,9 @@
 import { parseArgs } from "node:util";
 import { resolveCliCommand } from "./cli-command";
-import { DevRouterClient } from "./client";
+import { DevRouterClient, deriveRouteSecret, startControlServer } from "./client";
+import { CONTROL_DEFAULT_PORT } from "./control-server";
 import { detectPublicDevUrl, resolveDevPort } from "./detect-url";
+import { isAllowedEnvironmentId, isAllowedRouteId } from "./shared";
 import { waitForShutdownSignal } from "./wait-for-shutdown";
 
 async function main(): Promise<void> {
@@ -14,6 +16,11 @@ async function main(): Promise<void> {
       port: { type: "string" },
       url: { type: "string" },
       secret: { type: "string" },
+      "environment-id": { type: "string" },
+      "control-port": { type: "string" },
+      "control-socket": { type: "string" },
+      "control-token": { type: "string" },
+      "no-control": { type: "boolean" },
       help: { type: "boolean", short: "h" }
     }
   });
@@ -24,15 +31,21 @@ async function main(): Promise<void> {
   }
 
   const command = resolveCliCommand(positionals);
+  const routerUrl = values.url ?? process.env.DEV_ROUTER_URL;
+  const secret = values.secret ?? process.env.DEV_ROUTER_SECRET;
+  const routeId = values.route ?? process.env.DEV_ROUTER_ROUTE ?? "";
+
+  if (command === "token") {
+    await printRouteToken(secret, routeId);
+    return;
+  }
+
   if (command !== "connect") {
     console.error(`Unknown command: ${command}`);
     printUsage();
     process.exit(1);
   }
 
-  const routerUrl = values.url ?? process.env.DEV_ROUTER_URL;
-  const secret = values.secret ?? process.env.DEV_ROUTER_SECRET;
-  const routeId = values.route ?? process.env.DEV_ROUTER_ROUTE ?? "";
   const port = values.port ? Number.parseInt(values.port, 10) : undefined;
   if (values.port && (!Number.isInteger(port) || (port ?? 0) <= 0)) {
     console.error("--port must be a positive integer");
@@ -41,6 +54,8 @@ async function main(): Promise<void> {
 
   const localUrl = values["local-url"] ?? process.env.DEV_ROUTER_LOCAL_URL;
   const explicitTarget = values.target ?? process.env.PUBLIC_DEV_URL;
+  const environmentId =
+    values["environment-id"] ?? process.env.DEV_ROUTER_ENVIRONMENT_ID;
 
   if (localUrl && explicitTarget) {
     console.error("--local-url and --target are mutually exclusive.");
@@ -62,13 +77,35 @@ async function main(): Promise<void> {
     process.exit(1);
   }
 
+  if (environmentId && !isAllowedEnvironmentId(environmentId)) {
+    console.error("--environment-id is invalid.");
+    process.exit(1);
+  }
+
+  const controlPortRaw = values["control-port"] ?? process.env.DEV_ROUTER_CONTROL_PORT;
+  const controlPort = controlPortRaw ? Number.parseInt(controlPortRaw, 10) : CONTROL_DEFAULT_PORT;
+  if (controlPortRaw && (!Number.isInteger(controlPort) || controlPort <= 0)) {
+    console.error("--control-port must be a positive integer");
+    process.exit(1);
+  }
+
   const client = new DevRouterClient({ routerUrl, secret });
   const connection = await client.connect({
     routeId,
     localUrl,
     targetBaseUrl: localUrl ? undefined : targetBaseUrl,
-    port: port ?? resolveDevPort(process.env)
+    port: port ?? resolveDevPort(process.env),
+    environmentId
   });
+
+  const control =
+    values["no-control"]
+      ? null
+      : await startControlServer(connection, {
+          port: controlPort,
+          socketPath: values["control-socket"] ?? process.env.DEV_ROUTER_CONTROL_SOCKET,
+          token: values["control-token"] ?? process.env.DEV_ROUTER_CONTROL_TOKEN
+        });
 
   console.log(
     connection.transport === "tunnel"
@@ -86,16 +123,43 @@ async function main(): Promise<void> {
   } else if (detected) {
     console.log(`(detected from ${detected.source})`);
   }
+  if (connection.environmentId) {
+    console.log("");
+    console.log("Environment:");
+    console.log(connection.environmentId);
+  }
+  if (control) {
+    console.log("");
+    console.log("Control:");
+    console.log(`${control.url}/ready`);
+  }
   console.log("");
   console.log("Replica mode: this environment is subscribed, not yet provider-ready.");
   console.log("Next step: complete the app's OAuth to the third-party provider in this");
   console.log("environment. Use the Public URL as the redirect URI. Tokens stay here;");
   console.log("a new orb must OAuth again before webhook follow-up will work.");
+  if (control) {
+    console.log("Bind OAuth state from the app process: POST /oauth-states on the Control URL.");
+  }
   console.log("");
   console.log("Press Ctrl+C to disconnect.");
 
   await waitForShutdownSignal();
+  await control?.close();
   await connection.disconnect();
+}
+
+async function printRouteToken(secret: string | undefined, routeId: string): Promise<void> {
+  if (!secret) {
+    console.error("Missing DEV_ROUTER_SECRET / --secret (operator secret).");
+    process.exit(1);
+  }
+  if (!isAllowedRouteId(routeId)) {
+    console.error("Pass --route (or DEV_ROUTER_ROUTE) to mint a route credential.");
+    process.exit(1);
+  }
+  const token = await deriveRouteSecret(secret, routeId);
+  console.log(token);
 }
 
 function printUsage(): void {
@@ -103,6 +167,7 @@ function printUsage(): void {
   npx dev-router connect --route nomads --local-url http://127.0.0.1:3000
   npx dev-router connect --route my-web-app --port 3000
   npx dev-router connect --target https://abc123.cloud-dev.example
+  npx dev-router token --route nomads
 
 Reverse tunnel (--local-url) is the default for private cloud environments
 such as Amp orbs, Codespaces, Cursor, CI workers, and containers. The sidecar
@@ -115,12 +180,16 @@ route is optional. When omitted, traffic is accepted at the router root
 (https://dev-webhooks.example.com/*) with no project prefix.
 
 Environment:
-  DEV_ROUTER_URL        Shared router base URL
-  DEV_ROUTER_SECRET     Management bearer secret
-  DEV_ROUTER_ROUTE      Optional public path prefix for this project
-  DEV_ROUTER_PORT       Local app port used when constructing a detected URL (default 3000)
-  DEV_ROUTER_LOCAL_URL  Local HTTP origin for reverse-tunnel mode
-  PUBLIC_DEV_URL        Optional public https:// origin (public-target transport)`);
+  DEV_ROUTER_URL              Shared router base URL
+  DEV_ROUTER_SECRET           Operator secret or minted route credential
+  DEV_ROUTER_ROUTE            Optional public path prefix for this project
+  DEV_ROUTER_PORT             Local app port used when constructing a detected URL (default 3000)
+  DEV_ROUTER_LOCAL_URL        Local HTTP origin for reverse-tunnel mode
+  DEV_ROUTER_ENVIRONMENT_ID   Stable identity across reconnects
+  DEV_ROUTER_CONTROL_PORT     Loopback control port (default 8790)
+  DEV_ROUTER_CONTROL_SOCKET   Unix socket path instead of a TCP port
+  DEV_ROUTER_CONTROL_TOKEN    Optional bearer token for the control server
+  PUBLIC_DEV_URL              Optional public https:// origin (public-target transport)`);
 }
 
 main().catch((error: unknown) => {

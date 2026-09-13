@@ -51,7 +51,7 @@ Fan-out runs in `waitUntil`. The public caller gets `202` `{ "accepted": true }`
 
 ### Return the subscriber response for OAuth
 
-OAuth callbacks (`state` plus `code`/`error`, or `/oauth/callback` / `/auth/callback`) wait for one subscriber and return its status, headers, and body. Correlate with `wrapOAuthState()` or `bindOAuthState()`. A single subscriber on the route is enough. Multiple subscribers without correlation return `409 oauth_unroutable`.
+OAuth callbacks (`state` plus `code`/`error`, or `/oauth/callback` / `/auth/callback`) wait for one subscriber and return its status, headers, and body. Correlate with `wrapOAuthState()`, `bindOAuthState()`, or `POST http://127.0.0.1:8790/oauth-states` from the app process. A single subscriber on the route is enough. Multiple subscribers without correlation return `409 oauth_unroutable`.
 
 ### Preserve method, body, query, and forwardable headers
 
@@ -59,7 +59,7 @@ Hop-by-hop headers are dropped. The Worker adds `X-Dev-Router-Route`, `X-Dev-Rou
 
 ### Timeouts and isolation
 
-Each delivery uses a 10 second timeout and `redirect: "manual"`. `Promise.allSettled` means one failed webhook subscriber does not cancel the others. Tunnel sockets are removed as soon as they disconnect.
+Each delivery uses a 10 second timeout and `redirect: "manual"`. `Promise.allSettled` means one failed webhook subscriber does not cancel the others. Anonymous tunnel sockets are removed as soon as they disconnect. Environment-identified tunnels park for five minutes so OAuth bindings survive a reconnect.
 
 ### Replica mode
 
@@ -79,9 +79,9 @@ Source: `src/worker.ts` `handlePublic`
 
 Wrong: relying on webhook-style fan-out for `/oauth/callback`.
 
-Correct: wrap or bind `state` so the code reaches only the orb that started the flow.
+Correct: wrap or bind `state` so the code reaches only the orb that started the flow. The app process POSTs `/oauth-states` on the sidecar control server.
 
-Source: `src/oauth-state.ts`, `src/durable-object.ts`
+Source: `src/oauth-state.ts`, `src/durable-object.ts`, `src/control-server.ts`
 
 ### HIGH Assuming a named prefix is a secret
 

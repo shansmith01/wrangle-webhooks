@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  isAllowedEnvironmentId,
   isAllowedRouteId,
   isValidRouteId,
   managementSubscriberPath,
@@ -99,6 +100,15 @@ describe("isValidRouteId", () => {
   it("allows an empty route id as a root catch-all", () => {
     expect(isValidRouteId("")).toBe(false);
     expect(isAllowedRouteId("")).toBe(true);
+  });
+});
+
+describe("isAllowedEnvironmentId", () => {
+  it("accepts stable cloud environment identifiers", () => {
+    expect(isAllowedEnvironmentId("amp-thread-1")).toBe(true);
+    expect(isAllowedEnvironmentId("11111111-1111-1111-1111-111111111111")).toBe(true);
+    expect(isAllowedEnvironmentId("")).toBe(false);
+    expect(isAllowedEnvironmentId("has space")).toBe(false);
   });
 });
 

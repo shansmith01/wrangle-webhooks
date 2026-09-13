@@ -5,6 +5,7 @@ import {
   DEREGISTER_TIMEOUT_MS,
   HEARTBEAT_INTERVAL_MS,
   TargetBaseUrlError,
+  isAllowedEnvironmentId,
   isAllowedRouteId,
   managementSubscriberPath,
   publicIngressUrl,
@@ -20,6 +21,9 @@ import type {
   RegisterSubscriberResponse
 } from "./types";
 
+export { startControlServer, CONTROL_DEFAULT_PORT } from "./control-server";
+export type { ControlServer, ControlServerOptions } from "./control-server";
+export { deriveRouteSecret } from "./credentials";
 export { detectPublicDevUrl, resolveDevPort } from "./detect-url";
 export type { DetectedPublicUrl } from "./detect-url";
 export { wrapOAuthState } from "./oauth-state";
@@ -52,7 +56,8 @@ export class DevRouterClient {
         routerUrl: this.routerUrl,
         secret: this.secret,
         routeId,
-        localUrl: validateLocalUrl(options.localUrl)
+        localUrl: validateLocalUrl(options.localUrl),
+        environmentId: resolveEnvironmentId(options)
       });
       await connection.start();
       return connection;
@@ -78,6 +83,8 @@ class PublicConnection implements Connection {
   readonly publicUrl: string;
   readonly transport = "public" as const;
   forwardToken = "";
+  connectionToken = "";
+  readonly environmentId?: string;
 
   private readonly client: DevRouterClient;
   private readonly closed = new AbortController();
@@ -95,12 +102,14 @@ class PublicConnection implements Connection {
     this.routeId = options.routeId;
     this.targetBaseUrl = options.targetBaseUrl;
     this.publicUrl = publicIngressUrl(client.routerUrl, options.routeId);
+    this.environmentId = resolveEnvironmentId(options);
   }
 
   async start(): Promise<void> {
     const registered = await retry(() => this.register(), this.closed.signal);
     this.subscriberId = registered.subscriberId;
     this.forwardToken = registered.forwardToken;
+    this.connectionToken = registered.connectionToken;
     this.scheduleHeartbeat();
     process.on("SIGINT", this.onSignal);
     process.on("SIGTERM", this.onSignal);
@@ -156,7 +165,10 @@ class PublicConnection implements Connection {
     const response = await this.request(managementSubscriberPath(this.routeId), {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ targetBaseUrl: this.targetBaseUrl })
+      body: JSON.stringify({
+        targetBaseUrl: this.targetBaseUrl,
+        ...(this.environmentId ? { environmentId: this.environmentId } : {})
+      })
     });
     if (!response.ok) {
       throw new RetryableError(`registration failed: ${response.status}`);
@@ -164,7 +176,8 @@ class PublicConnection implements Connection {
     const payload = (await response.json()) as RegisterSubscriberResponse;
     return {
       ...payload,
-      forwardToken: payload.forwardToken ?? ""
+      forwardToken: payload.forwardToken ?? "",
+      connectionToken: payload.connectionToken ?? ""
     };
   }
 
@@ -188,6 +201,7 @@ class PublicConnection implements Connection {
         const registered = await this.register();
         this.subscriberId = registered.subscriberId;
         this.forwardToken = registered.forwardToken;
+        this.connectionToken = registered.connectionToken;
       } else if (!response.ok) {
         throw new RetryableError(`heartbeat failed: ${response.status}`);
       }
@@ -205,10 +219,17 @@ class PublicConnection implements Connection {
   }
 
   private async request(path: string, init: RequestInit): Promise<Response> {
-    return authorizedFetch(this.client.routerUrl, this.client.secret, path, {
-      ...init,
-      signal: init.signal ?? this.closed.signal
-    });
+    const subscriberScoped =
+      path.includes("/subscribers/") && this.connectionToken.length > 0;
+    return authorizedFetch(
+      this.client.routerUrl,
+      subscriberScoped ? this.connectionToken : this.client.secret,
+      path,
+      {
+        ...init,
+        signal: init.signal ?? this.closed.signal
+      }
+    );
   }
 }
 
@@ -258,6 +279,17 @@ function resolveRouteId(options: ConnectOptions): string {
     throw new Error("routeId is invalid");
   }
   return routeId;
+}
+
+function resolveEnvironmentId(options: ConnectOptions): string | undefined {
+  const environmentId = options.environmentId ?? process.env.DEV_ROUTER_ENVIRONMENT_ID;
+  if (!environmentId) {
+    return undefined;
+  }
+  if (!isAllowedEnvironmentId(environmentId)) {
+    throw new Error("environmentId is invalid");
+  }
+  return environmentId;
 }
 
 function resolveTargetBaseUrl(options: ConnectOptions): string {

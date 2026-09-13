@@ -1,3 +1,4 @@
+import { deriveRouteSecret } from "../../src/credentials";
 import {
   createExecutionContext,
   env,
@@ -42,8 +43,9 @@ async function fetchWorker(
 
 async function register(
   routeId: string,
-  targetBaseUrl: string
-): Promise<{ subscriberId: string }> {
+  targetBaseUrl: string,
+  environmentId?: string
+): Promise<{ subscriberId: string; connectionToken: string }> {
   const path =
     routeId === ""
       ? "https://dev-webhooks.example.com/_router/subscribers"
@@ -51,10 +53,10 @@ async function register(
   const response = await fetchWorker(path, {
     method: "POST",
     headers: authHeaders({ "Content-Type": "application/json" }),
-    body: JSON.stringify({ targetBaseUrl })
+    body: JSON.stringify({ targetBaseUrl, ...(environmentId ? { environmentId } : {}) })
   });
   expect(response.status).toBe(200);
-  return (await response.json()) as { subscriberId: string };
+  return (await response.json()) as { subscriberId: string; connectionToken: string };
 }
 
 describe("management API", () => {
@@ -73,6 +75,7 @@ describe("management API", () => {
   it("registers, heartbeats, and deregisters a subscriber", async () => {
     const created = await register("lifecycle-route", "https://dev-a.example");
     expect(created.subscriberId).toMatch(/^sub_[0-9a-f]+$/);
+    expect(created.connectionToken).toMatch(/^ct_/);
 
     const heartbeat = await fetchWorker(
       `https://dev-webhooks.example.com/_router/routes/lifecycle-route/subscribers/${created.subscriberId}/heartbeat`,
@@ -272,6 +275,7 @@ describe("reverse tunnel", () => {
     const { ws, hello } = await openTunnel("orb");
     expect(hello.subscriberId).toMatch(/^sub_/);
     expect(hello.forwardToken).toMatch(/^ft_/);
+    expect(hello.connectionToken).toMatch(/^ct_/);
 
     const requestMessage = waitForJson(ws);
     const ctx = createExecutionContext();
@@ -324,13 +328,146 @@ describe("reverse tunnel", () => {
   });
 });
 
-async function openTunnel(routeId: string): Promise<{
+describe("scoped credentials", () => {
+  it("lets a route credential join only that route", async () => {
+    const routeSecret = await deriveRouteSecret(env.DEV_ROUTER_SECRET, "nomads");
+    const allowed = await fetchWorker(
+      "https://dev-webhooks.example.com/_router/routes/nomads/subscribers",
+      {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${routeSecret}`,
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify({ targetBaseUrl: "https://dev-nomads.example" })
+      }
+    );
+    expect(allowed.status).toBe(200);
+
+    const denied = await fetchWorker(
+      "https://dev-webhooks.example.com/_router/routes/other/subscribers",
+      {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${routeSecret}`,
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify({ targetBaseUrl: "https://dev-other.example" })
+      }
+    );
+    expect(denied.status).toBe(401);
+  });
+
+  it("does not let a route credential bind or delete another subscriber", async () => {
+    const created = await register("scoped-bind", "https://dev-a.example");
+    const routeSecret = await deriveRouteSecret(env.DEV_ROUTER_SECRET, "scoped-bind");
+    const bind = await fetchWorker(
+      `https://dev-webhooks.example.com/_router/routes/scoped-bind/subscribers/${created.subscriberId}/oauth-states`,
+      {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${routeSecret}`,
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify({ state: "stolen" })
+      }
+    );
+    expect(bind.status).toBe(401);
+
+    const allowed = await fetchWorker(
+      `https://dev-webhooks.example.com/_router/routes/scoped-bind/subscribers/${created.subscriberId}/oauth-states`,
+      {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${created.connectionToken}`,
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify({ state: "orb-a-state" })
+      }
+    );
+    expect(allowed.status).toBe(200);
+  });
+
+  it("mints a route credential only for the operator secret", async () => {
+    const minted = await fetchWorker(
+      "https://dev-webhooks.example.com/_router/routes/nomads/credential",
+      { headers: authHeaders() }
+    );
+    expect(minted.status).toBe(200);
+    const body = (await minted.json()) as { secret: string };
+    expect(body.secret).toBe(await deriveRouteSecret(env.DEV_ROUTER_SECRET, "nomads"));
+
+    const denied = await fetchWorker(
+      "https://dev-webhooks.example.com/_router/routes/nomads/credential",
+      { headers: { Authorization: `Bearer ${body.secret}` } }
+    );
+    expect(denied.status).toBe(401);
+  });
+});
+
+describe("stable environment identity", () => {
+  it("reuses a subscriber id and OAuth bindings across tunnel reconnects", async () => {
+    const first = await openTunnel("env-route", "amp-thread-9");
+    expect(first.hello.environmentId).toBe("amp-thread-9");
+
+    const bind = await fetchWorker(
+      `https://dev-webhooks.example.com/_router/routes/env-route/subscribers/${first.hello.subscriberId}/oauth-states`,
+      {
+        method: "POST",
+        headers: authHeaders({ "Content-Type": "application/json" }),
+        body: JSON.stringify({ state: "pending-oauth" })
+      }
+    );
+    expect(bind.status).toBe(200);
+
+    await new Promise<void>((resolve) => {
+      first.ws.addEventListener("close", () => resolve(), { once: true });
+      first.ws.close(1000, "reconnect");
+    });
+
+    const second = await openTunnel("env-route", "amp-thread-9");
+    expect(second.hello.subscriberId).toBe(first.hello.subscriberId);
+
+    const requestMessage = waitForJson(second.ws);
+    const ctx = createExecutionContext();
+    const oauthPromise = worker.fetch(
+      new Request(
+        "https://dev-webhooks.example.com/env-route/oauth/callback?code=abc&state=pending-oauth"
+      ) as Request<unknown, IncomingRequestCfProperties>,
+      env,
+      ctx
+    );
+    const incoming = await requestMessage;
+    second.ws.send(
+      JSON.stringify({
+        type: "response",
+        id: incoming.id,
+        status: 302,
+        headers: [["Location", "https://app.example/landed"]],
+        body: ""
+      })
+    );
+    const response = await oauthPromise;
+    expect(response.status).toBe(302);
+    expect(response.headers.get("Location")).toBe("https://app.example/landed");
+    await waitOnExecutionContext(ctx);
+    second.ws.close(1000, "done");
+  });
+});
+
+async function openTunnel(
+  routeId: string,
+  environmentId?: string
+): Promise<{
   ws: WebSocket;
-  hello: { subscriberId: string; forwardToken: string };
+  hello: { subscriberId: string; forwardToken: string; connectionToken: string; environmentId?: string };
 }> {
   const ctx = createExecutionContext();
+  const path = environmentId
+    ? `https://dev-webhooks.example.com/_router/routes/${routeId}/tunnel?environmentId=${encodeURIComponent(environmentId)}`
+    : `https://dev-webhooks.example.com/_router/routes/${routeId}/tunnel`;
   const response = await worker.fetch(
-    new Request(`https://dev-webhooks.example.com/_router/routes/${routeId}/tunnel`, {
+    new Request(path, {
       headers: authHeaders({ Upgrade: "websocket" })
     }) as Request<unknown, IncomingRequestCfProperties>,
     env,
@@ -345,7 +482,12 @@ async function openTunnel(routeId: string): Promise<{
   await waitOnExecutionContext(ctx);
   return {
     ws: ws as WebSocket,
-    hello: hello as { subscriberId: string; forwardToken: string }
+    hello: hello as {
+      subscriberId: string;
+      forwardToken: string;
+      connectionToken: string;
+      environmentId?: string;
+    }
   };
 }
 

@@ -37,7 +37,7 @@ A request is treated as OAuth when:
 Routing order:
 
 1. Signed `state` from `connection.wrapOAuthState()` (`dr1.` prefix)
-2. Temporary `state → subscriber` binding from `connection.bindOAuthState(state)`
+2. Temporary `state → subscriber` binding from `connection.bindOAuthState(state)` or `POST http://127.0.0.1:8790/oauth-states`
 3. If the route has exactly one subscriber, that subscriber
 4. Otherwise `409` `{ "error": "oauth_unroutable" }`
 
@@ -59,10 +59,10 @@ Hop-by-hop headers (`connection`, `keep-alive`, `host`, `content-length`, and si
 
 `_router` and `dashboard` are reserved path prefixes and are not valid `routeId` values.
 
-Disconnected reverse-tunnel subscribers are removed immediately when the WebSocket closes.
+Disconnected reverse-tunnel subscribers without an environment id are removed immediately when the WebSocket closes. With `--environment-id`, the subscriber parks for five minutes so pending OAuth bindings survive a reconnect. The Worker expires tunnels that miss pings.
 
 ## Replica mode
 
 Every connected environment is meant to be a full copy. Webhook fan-out is useful only after **this** replica has completed the app’s OAuth to the provider and stored tokens locally. A webhook that then calls the provider will fail on orbs that skipped that step.
 
-Inbound OAuth callbacks stay single-target (`wrapOAuthState` / `bindOAuthState`). Do not fan authorization codes. Each replica runs its own OAuth once; after that, all authenticated replicas can receive the same webhook.
+Inbound OAuth callbacks stay single-target (`wrapOAuthState` / `bindOAuthState` / control-server `POST /oauth-states`). Do not fan authorization codes. Each replica runs its own OAuth once; after that, all authenticated replicas can receive the same webhook.

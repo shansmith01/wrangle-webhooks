@@ -17,6 +17,7 @@ sources:
   - shansmith01/wrangle-webhooks:wrangler.jsonc
   - shansmith01/wrangle-webhooks:src/worker.ts
   - shansmith01/wrangle-webhooks:src/auth.ts
+  - shansmith01/wrangle-webhooks:src/credentials.ts
 ---
 
 # Deploy the shared router
@@ -33,7 +34,7 @@ npx wrangler deploy
 npx wrangler secret put DEV_ROUTER_SECRET
 ```
 
-Bind a hostname such as `dev-webhooks.example.com` in the Cloudflare dashboard. Management routes under `/_router/*` require `Authorization: Bearer <secret>` (tunnel upgrades may use the `dev-router.v1.` WebSocket subprotocol). Remote environments must reach this origin over HTTPS and WSS. The Worker fetches public-target `https://` origins; reverse-tunnel subscribers use the client’s outbound WebSocket.
+Bind a hostname such as `dev-webhooks.example.com` in the Cloudflare dashboard. Management join routes accept the operator secret or a minted route credential. Subscriber bind/heartbeat/DELETE accept the operator secret or that connection’s token. Tunnel upgrades may use the `dev-router.v1.` WebSocket subprotocol. Remote environments must reach this origin over HTTPS and WSS. The Worker fetches public-target `https://` origins; reverse-tunnel subscribers use the client’s outbound WebSocket. Mint route credentials with `npx dev-router token --route <id>` and give orbs that value, not the operator secret.
 
 ## Core Patterns
 
@@ -53,7 +54,7 @@ Keep the secret in `.dev.vars` locally. Do not commit it.
 
 ### Dashboard
 
-`GET /dashboard` and `GET /dashboard.json` are public status surfaces. They list active routes, subscriber counts, and transport. They do not return `DEV_ROUTER_SECRET` or per-connection forward tokens.
+`GET /dashboard` and `GET /dashboard.json` are public status surfaces. They list active routes, subscriber counts, and transport. They do not return `DEV_ROUTER_SECRET`, route credentials, connection tokens, or per-connection forward tokens.
 
 ## Common Mistakes
 
@@ -65,7 +66,7 @@ Wrong:
 { "vars": { "DEV_ROUTER_SECRET": "super-secret" } }
 ```
 
-Correct: `npx wrangler secret put DEV_ROUTER_SECRET` in production; `.dev.vars` locally (gitignored). Clients get the same value as `DEV_ROUTER_SECRET`.
+Correct: `npx wrangler secret put DEV_ROUTER_SECRET` in production; `.dev.vars` locally (gitignored). Mint per-route client credentials with `npx dev-router token --route nomads`. Do not put the operator secret on every orb.
 
 Source: `skills/deploy/deploy.md`, `.gitignore`
 
@@ -81,10 +82,10 @@ Source: `wrangler.jsonc`
 
 Wrong: assuming `/dashboard` is gated by the management bearer token.
 
-Correct: `/_router/*` is bearer-protected with a timing-safe compare. `/dashboard` is public status HTML/JSON.
+Correct: `/_router/*` join is bearer-protected (operator or route credential) with a timing-safe compare. Subscriber mutations need the operator secret or that connection’s token. `/dashboard` is public status HTML/JSON.
 
-Source: `src/worker.ts`, `src/auth.ts`
+Source: `src/worker.ts`, `src/auth.ts`, `src/credentials.ts`
 
 ## Completion
 
-`wrangler deploy` succeeds, `DEV_ROUTER_SECRET` is set, and `GET https://<host>/dashboard` renders. Clients can then `connect` over HTTPS and WSS. Load `connect` for subscriber registration in remote cloud environments.
+`wrangler deploy` succeeds, `DEV_ROUTER_SECRET` is set, and `GET https://<host>/dashboard` renders. Mint a route credential for each project (`npx dev-router token --route nomads`) and give that to clients. Load `connect` for subscriber registration in remote cloud environments.

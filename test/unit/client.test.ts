@@ -40,13 +40,15 @@ describe("DevRouterClient", () => {
     });
     const connection = await client.connect({
       routeId: "my-web-app",
-      targetBaseUrl: "https://abc123.cloud-dev.example"
+      targetBaseUrl: "https://abc123.cloud-dev.example",
+      environmentId: "codespace-1"
     });
 
     expect(connection.subscriberId).toBe("sub_abc123");
     expect(connection.forwardToken).toBe("ft_testtoken");
     expect(connection.transport).toBe("public");
     expect(connection.publicUrl).toBe("https://dev-webhooks.example.com/my-web-app/*");
+    expect(connection.environmentId).toBe("codespace-1");
     expect(fetchMock).toHaveBeenCalledTimes(1);
     const firstCall = fetchMock.mock.calls[0];
     expect(String(firstCall[0])).toBe(
@@ -54,6 +56,7 @@ describe("DevRouterClient", () => {
     );
     expect(firstCall[1]?.headers).toBeInstanceOf(Headers);
     expect((firstCall[1]?.headers as Headers).get("Authorization")).toBe("Bearer test-secret");
+    expect(String(firstCall[1]?.body)).toContain("codespace-1");
 
     await connection.disconnect();
     expect(fetchMock).toHaveBeenCalledTimes(2);

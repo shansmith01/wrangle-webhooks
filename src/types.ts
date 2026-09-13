@@ -14,6 +14,7 @@ export interface RegisterSubscriberResponse {
   routeId: string;
   expiresIn: number;
   forwardToken: string;
+  connectionToken: string;
 }
 
 export interface DevRouterClientOptions {
@@ -26,6 +27,7 @@ export interface ConnectOptions {
   targetBaseUrl?: string;
   localUrl?: string;
   port?: number;
+  environmentId?: string;
 }
 
 export interface Connection {
@@ -35,6 +37,8 @@ export interface Connection {
   publicUrl: string;
   transport: SubscriberTransport;
   forwardToken: string;
+  connectionToken: string;
+  environmentId?: string;
   disconnect(): Promise<void>;
   wrapOAuthState(inner?: string): Promise<string>;
   bindOAuthState(state: string): Promise<void>;

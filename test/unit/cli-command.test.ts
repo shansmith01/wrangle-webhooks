@@ -6,8 +6,9 @@ describe("resolveCliCommand", () => {
     expect(resolveCliCommand([])).toBe("connect");
   });
 
-  it("accepts connect", () => {
+  it("accepts connect and token", () => {
     expect(resolveCliCommand(["connect"])).toBe("connect");
+    expect(resolveCliCommand(["token"])).toBe("token");
   });
 
   it("ignores a redundant binary name from npx github installs", () => {

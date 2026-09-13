@@ -1,7 +1,9 @@
+import { deriveRouteSecret } from "../../src/credentials";
 import { describe, expect, it } from "vitest";
 import {
   classifyDelivery,
   unwrapOAuthState,
+  unwrapOAuthStateForRoute,
   wrapOAuthState
 } from "../../src/oauth-state";
 
@@ -61,5 +63,20 @@ describe("wrapOAuthState", () => {
       routeId: "nomads"
     });
     expect(await unwrapOAuthState("other-secret", state)).toBeNull();
+  });
+
+  it("unwraps a state signed with the route credential", async () => {
+    const routeSecret = await deriveRouteSecret("operator-secret", "nomads");
+    const state = await wrapOAuthState({
+      secret: routeSecret,
+      subscriberId: "sub_abc",
+      routeId: "nomads"
+    });
+    const payload = await unwrapOAuthStateForRoute({
+      operatorSecret: "operator-secret",
+      routeSecret,
+      state
+    });
+    expect(payload).toMatchObject({ sub: "sub_abc", route: "nomads" });
   });
 });

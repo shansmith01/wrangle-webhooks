@@ -1,4 +1,5 @@
-import { requireManagementAuth, timingSafeEqualString, unauthorized } from "./auth";
+import { readManagementSecret, requireManagementAuth, unauthorized } from "./auth";
+import { deriveRouteSecret, matchJoinCredential } from "./credentials";
 import { dashboardHtml, dashboardStatus, type DashboardRoute } from "./dashboard";
 import { RouteDurableObject } from "./durable-object";
 import {
@@ -11,6 +12,7 @@ import {
   TargetBaseUrlError,
   durableObjectNameForIndex,
   durableObjectNameForRoute,
+  isAllowedEnvironmentId,
   isAllowedRouteId,
   isValidRouteId,
   remainingPathFromPublicUrl,
@@ -18,7 +20,6 @@ import {
 } from "./shared";
 import {
   decodeBody,
-  decodeTunnelSubprotocolSecret,
   encodeBody,
   routeIdFromTunnelPath,
   serializeHeaders
@@ -32,10 +33,12 @@ const HEARTBEAT =
   /^\/_router\/routes\/([^/]+)\/subscribers\/([^/]+)\/heartbeat$/;
 const DEREGISTER = /^\/_router\/routes\/([^/]+)\/subscribers\/([^/]+)$/;
 const OAUTH_BIND = /^\/_router\/routes\/([^/]+)\/subscribers\/([^/]+)\/oauth-states$/;
+const CREDENTIAL = /^\/_router\/routes\/([^/]+)\/credential$/;
 const DEFAULT_REGISTER = /^\/_router\/subscribers$/;
 const DEFAULT_HEARTBEAT = /^\/_router\/subscribers\/([^/]+)\/heartbeat$/;
 const DEFAULT_DEREGISTER = /^\/_router\/subscribers\/([^/]+)$/;
 const DEFAULT_OAUTH_BIND = /^\/_router\/subscribers\/([^/]+)\/oauth-states$/;
+const DEFAULT_CREDENTIAL = /^\/_router\/credential$/;
 const DEFAULT_TUNNEL = /^\/_router\/tunnel$/;
 const NAMED_TUNNEL = /^\/_router\/routes\/([^/]+)\/tunnel$/;
 
@@ -60,88 +63,177 @@ async function handleManagement(
   if (!env.DEV_ROUTER_SECRET) {
     return Response.json({ error: "server_misconfigured" }, { status: 500 });
   }
-  const isTunnelPath =
-    NAMED_TUNNEL.test(url.pathname) || DEFAULT_TUNNEL.test(url.pathname);
-  if (isTunnelPath) {
-    if (!authorizeManagement(request, env.DEV_ROUTER_SECRET)) {
-      return unauthorized();
-    }
-  } else if (!requireManagementAuth(request, env.DEV_ROUTER_SECRET)) {
-    return unauthorized();
-  }
 
   const namedTunnel = url.pathname.match(NAMED_TUNNEL);
   if (namedTunnel) {
+    const denied = await authorizeJoin(request, env, decodeURIComponent(namedTunnel[1]));
+    if (denied) {
+      return denied;
+    }
     return handleTunnel(request, env, decodeURIComponent(namedTunnel[1]));
   }
   if (DEFAULT_TUNNEL.test(url.pathname)) {
+    const denied = await authorizeJoin(request, env, "");
+    if (denied) {
+      return denied;
+    }
     return handleTunnel(request, env, "");
+  }
+
+  const defaultCredential = DEFAULT_CREDENTIAL.test(url.pathname);
+  if (defaultCredential && request.method === "GET") {
+    return mintRouteCredential(request, env, "");
+  }
+  const namedCredential = url.pathname.match(CREDENTIAL);
+  if (namedCredential && request.method === "GET") {
+    return mintRouteCredential(request, env, decodeURIComponent(namedCredential[1]));
   }
 
   const defaultRegister = url.pathname.match(DEFAULT_REGISTER);
   if (defaultRegister && request.method === "POST") {
+    const denied = await authorizeJoin(request, env, "");
+    if (denied) {
+      return denied;
+    }
     return registerSubscriber(request, env, "");
   }
 
   const defaultHeartbeat = url.pathname.match(DEFAULT_HEARTBEAT);
   if (defaultHeartbeat && request.method === "POST") {
+    const denied = await authorizeSubscriber(
+      request,
+      env,
+      "",
+      decodeURIComponent(defaultHeartbeat[1])
+    );
+    if (denied) {
+      return denied;
+    }
     return heartbeatSubscriber(env, "", decodeURIComponent(defaultHeartbeat[1]));
   }
 
   const defaultOAuthBind = url.pathname.match(DEFAULT_OAUTH_BIND);
   if (defaultOAuthBind && request.method === "POST") {
+    const denied = await authorizeSubscriber(
+      request,
+      env,
+      "",
+      decodeURIComponent(defaultOAuthBind[1])
+    );
+    if (denied) {
+      return denied;
+    }
     return bindOAuthState(request, env, "", decodeURIComponent(defaultOAuthBind[1]));
   }
 
   const registerMatch = url.pathname.match(REGISTER);
   if (registerMatch && request.method === "POST") {
-    return registerSubscriber(request, env, decodeURIComponent(registerMatch[1]));
+    const routeId = decodeURIComponent(registerMatch[1]);
+    const denied = await authorizeJoin(request, env, routeId);
+    if (denied) {
+      return denied;
+    }
+    return registerSubscriber(request, env, routeId);
   }
 
   const heartbeatMatch = url.pathname.match(HEARTBEAT);
   if (heartbeatMatch && request.method === "POST") {
-    return heartbeatSubscriber(
-      env,
-      decodeURIComponent(heartbeatMatch[1]),
-      decodeURIComponent(heartbeatMatch[2])
-    );
+    const routeId = decodeURIComponent(heartbeatMatch[1]);
+    const subscriberId = decodeURIComponent(heartbeatMatch[2]);
+    const denied = await authorizeSubscriber(request, env, routeId, subscriberId);
+    if (denied) {
+      return denied;
+    }
+    return heartbeatSubscriber(env, routeId, subscriberId);
   }
 
   const oauthBindMatch = url.pathname.match(OAUTH_BIND);
   if (oauthBindMatch && request.method === "POST") {
-    return bindOAuthState(
-      request,
-      env,
-      decodeURIComponent(oauthBindMatch[1]),
-      decodeURIComponent(oauthBindMatch[2])
-    );
+    const routeId = decodeURIComponent(oauthBindMatch[1]);
+    const subscriberId = decodeURIComponent(oauthBindMatch[2]);
+    const denied = await authorizeSubscriber(request, env, routeId, subscriberId);
+    if (denied) {
+      return denied;
+    }
+    return bindOAuthState(request, env, routeId, subscriberId);
   }
 
   const defaultDeregister = url.pathname.match(DEFAULT_DEREGISTER);
   if (defaultDeregister && request.method === "DELETE") {
-    return deregisterSubscriber(env, "", decodeURIComponent(defaultDeregister[1]));
+    const subscriberId = decodeURIComponent(defaultDeregister[1]);
+    const denied = await authorizeSubscriber(request, env, "", subscriberId);
+    if (denied) {
+      return denied;
+    }
+    return deregisterSubscriber(env, "", subscriberId);
   }
 
   const deregisterMatch = url.pathname.match(DEREGISTER);
   if (deregisterMatch && request.method === "DELETE") {
-    return deregisterSubscriber(
-      env,
-      decodeURIComponent(deregisterMatch[1]),
-      decodeURIComponent(deregisterMatch[2])
-    );
+    const routeId = decodeURIComponent(deregisterMatch[1]);
+    const subscriberId = decodeURIComponent(deregisterMatch[2]);
+    const denied = await authorizeSubscriber(request, env, routeId, subscriberId);
+    if (denied) {
+      return denied;
+    }
+    return deregisterSubscriber(env, routeId, subscriberId);
   }
 
+  if (!requireManagementAuth(request, env.DEV_ROUTER_SECRET) && !readManagementSecret(request)) {
+    return unauthorized();
+  }
   return Response.json({ error: "not_found" }, { status: 404 });
 }
 
-function authorizeManagement(request: Request, secret: string): boolean {
-  if (requireManagementAuth(request, secret)) {
-    return true;
-  }
-  const fromProtocol = decodeTunnelSubprotocolSecret(
-    request.headers.get("Sec-WebSocket-Protocol")
+async function authorizeJoin(
+  request: Request,
+  env: Env,
+  routeId: string
+): Promise<Response | null> {
+  const role = await matchJoinCredential(
+    readManagementSecret(request),
+    env.DEV_ROUTER_SECRET,
+    routeId
   );
-  return fromProtocol !== null && timingSafeEqualString(fromProtocol, secret);
+  return role ? null : unauthorized();
+}
+
+async function authorizeSubscriber(
+  request: Request,
+  env: Env,
+  routeId: string,
+  subscriberId: string
+): Promise<Response | null> {
+  const bearer = readManagementSecret(request);
+  if (!bearer) {
+    return unauthorized();
+  }
+  if (await matchJoinCredential(bearer, env.DEV_ROUTER_SECRET, routeId) === "operator") {
+    return null;
+  }
+  if (!isAllowedRouteId(routeId)) {
+    return Response.json({ error: "invalid_route_id" }, { status: 400 });
+  }
+  const stub = env.ROUTE.getByName(durableObjectNameForRoute(routeId));
+  if (await stub.verifyConnectionToken(subscriberId, bearer)) {
+    return null;
+  }
+  return unauthorized();
+}
+
+async function mintRouteCredential(
+  request: Request,
+  env: Env,
+  routeId: string
+): Promise<Response> {
+  if (!requireManagementAuth(request, env.DEV_ROUTER_SECRET)) {
+    return unauthorized();
+  }
+  if (!isAllowedRouteId(routeId)) {
+    return Response.json({ error: "invalid_route_id" }, { status: 400 });
+  }
+  const secret = await deriveRouteSecret(env.DEV_ROUTER_SECRET, routeId);
+  return Response.json({ routeId, secret });
 }
 
 async function handleTunnel(
@@ -201,14 +293,26 @@ async function registerSubscriber(
     throw error;
   }
 
+  const environmentId =
+    payload &&
+    typeof payload === "object" &&
+    "environmentId" in payload &&
+    typeof payload.environmentId === "string"
+      ? payload.environmentId
+      : undefined;
+  if (environmentId && !isAllowedEnvironmentId(environmentId)) {
+    return Response.json({ error: "invalid_environment_id" }, { status: 400 });
+  }
+
   const stub = env.ROUTE.getByName(durableObjectNameForRoute(routeId));
-  const result = await stub.register(targetBaseUrl, routeId);
+  const result = await stub.register(targetBaseUrl, routeId, environmentId ?? null);
   await indexStub(env).addRoute(routeId);
   return Response.json({
     subscriberId: result.subscriberId,
     routeId,
     expiresIn: result.expiresIn,
-    forwardToken: result.forwardToken
+    forwardToken: result.forwardToken,
+    connectionToken: result.connectionToken
   });
 }
 

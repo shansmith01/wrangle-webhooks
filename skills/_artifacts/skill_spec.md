@@ -4,7 +4,7 @@ Shared Cloudflare ingress for ephemeral cloud development environments. One Work
 
 ## Coverage and batch history
 
-- **2026-09-14 / 0.2.0** — Reverse-tunnel transport, OAuth subscriber responses, correlated `state` routing, replica-mode “OAuth this environment after connect” prompt, per-connection forward tokens, immediate tunnel disconnect.
+- **2026-09-14 / 0.2.0** — Reverse-tunnel transport, OAuth subscriber responses, correlated `state` routing, replica-mode “OAuth this environment after connect” prompt, per-connection forward tokens, loopback control server, stable environment identity, route-scoped join credentials, tunnel pong deadline.
 - **2026-09-14 / 0.1.0** — Initial batch for connect, deploy, and forwarding.
 
 ## Domains
@@ -19,13 +19,13 @@ Shared Cloudflare ingress for ephemeral cloud development environments. One Work
 
 | Skill | Type | Domain | What it covers | Failure modes |
 | --- | --- | --- | --- | --- |
-| connect | core | client-connection | CLI, DevRouterClient, reverse tunnel, replica-mode OAuth prompt | 5 |
+| connect | core | client-connection | CLI, DevRouterClient, reverse tunnel, control server, replica-mode OAuth prompt | 6 |
 | deploy | lifecycle | worker-operations | wrangler deploy, secrets, types, dashboard, WSS | 3 |
 | forwarding | core | ingress-contract | webhook 202, OAuth proxy, replica credentials, headers, fan-out vs correlation | 6 |
 
 ## Failure Mode Inventory
 
-### connect (5 failure modes)
+### connect (6 failure modes)
 
 | # | Mistake | Priority | Source | Cross-skill? |
 | --- | --- | --- | --- | --- |
@@ -34,6 +34,7 @@ Shared Cloudflare ingress for ephemeral cloud development environments. One Work
 | 3 | npx public package name `dev-router` without install | HIGH | skills/connect/connect.md | — |
 | 4 | Reserved route prefix | MEDIUM | src/shared.ts | — |
 | 5 | Declare a new environment ready without OAuth | HIGH | skills/connect/connect.md | forwarding |
+| 6 | Give every orb the operator secret | HIGH | src/credentials.ts | deploy |
 
 ### deploy (3 failure modes)
 
@@ -60,6 +61,7 @@ Shared Cloudflare ingress for ephemeral cloud development environments. One Work
 | --- | --- | --- |
 | Public prefix vs management auth | connect ↔ forwarding | Using --route as a credential |
 | Replica OAuth vs webhook fan-out | connect ↔ forwarding | Connecting without prompting this environment to OAuth |
+| Sidecar Connection vs app-generated OAuth state | connect ↔ forwarding | Binding state from the API without the loopback control server |
 
 ## Cross-References
 
@@ -70,7 +72,7 @@ Shared Cloudflare ingress for ephemeral cloud development environments. One Work
 
 ## Remaining Gaps
 
-None for 0.2.0 reverse-tunnel + OAuth correlation.
+None for 0.2.0 reverse-tunnel, OAuth correlation, control server, environment identity, or scoped join credentials.
 
 ## Recommended Skill File Structure
 

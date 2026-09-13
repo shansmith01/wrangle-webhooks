@@ -5,6 +5,7 @@ export const TUNNEL_SUBPROTOCOL_PREFIX = "dev-router.v1.";
 export const TUNNEL_MAX_BODY_BYTES = 768 * 1024;
 export const TUNNEL_HELLO_TIMEOUT_MS = 10_000;
 export const TUNNEL_PING_INTERVAL_MS = 30_000;
+export const TUNNEL_PONG_DEADLINE_MS = 75_000;
 
 export type HeaderPair = [string, string];
 
@@ -14,6 +15,12 @@ export interface TunnelHelloMessage {
   subscriberId: string;
   routeId: string;
   forwardToken: string;
+  connectionToken?: string;
+  environmentId?: string;
+}
+
+export interface TunnelHeartbeatMessage {
+  type: "heartbeat";
 }
 
 export interface TunnelRequestMessage {
@@ -44,10 +51,21 @@ export interface TunnelErrorMessage {
 export type TunnelServerMessage = TunnelHelloMessage | TunnelRequestMessage;
 export type TunnelClientMessage = TunnelResponseMessage | TunnelErrorMessage;
 
-export function managementTunnelPath(routeId: string): string {
+export function managementTunnelPath(routeId: string, environmentId?: string): string {
+  const path =
+    routeId === ""
+      ? "/_router/tunnel"
+      : `/_router/routes/${encodeURIComponent(routeId)}/tunnel`;
+  if (!environmentId) {
+    return path;
+  }
+  return `${path}?environmentId=${encodeURIComponent(environmentId)}`;
+}
+
+export function managementCredentialPath(routeId: string): string {
   return routeId === ""
-    ? "/_router/tunnel"
-    : `/_router/routes/${encodeURIComponent(routeId)}/tunnel`;
+    ? "/_router/credential"
+    : `/_router/routes/${encodeURIComponent(routeId)}/credential`;
 }
 
 export function managementOAuthStatePath(routeId: string, subscriberId: string): string {
@@ -144,6 +162,10 @@ export function parseJsonMessage(raw: string): unknown {
 
 export function isTunnelHello(value: unknown): value is TunnelHelloMessage {
   return isRecord(value) && value.type === "hello" && typeof value.subscriberId === "string";
+}
+
+export function isTunnelHeartbeat(value: unknown): value is TunnelHeartbeatMessage {
+  return isRecord(value) && value.type === "heartbeat";
 }
 
 export function isTunnelRequest(value: unknown): value is TunnelRequestMessage {

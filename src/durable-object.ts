@@ -5,11 +5,19 @@ import {
   deliverToSubscriber,
   filterResponseHeaders
 } from "./forward";
-import { OAUTH_STATE_MAX_LENGTH, OAUTH_STATE_TTL_MS, unwrapOAuthState } from "./oauth-state";
+import {
+  connectionTokenMatches,
+  deriveRouteSecret,
+  hashConnectionToken,
+  randomConnectionToken
+} from "./credentials";
+import { OAUTH_STATE_MAX_LENGTH, OAUTH_STATE_TTL_MS, unwrapOAuthStateForRoute } from "./oauth-state";
 import {
   DELIVERY_TIMEOUT_MS,
   SUBSCRIBER_TTL_MS,
+  TUNNEL_STALE_MS,
   durableObjectNameForIndex,
+  isAllowedEnvironmentId,
   validateTargetBaseUrl
 } from "./shared";
 import {
@@ -22,6 +30,7 @@ import {
   encodeBody,
   headersFromPairs,
   isTunnelError,
+  isTunnelHeartbeat,
   isTunnelResponse,
   parseJsonMessage,
   routeIdFromTunnelPath,
@@ -36,6 +45,8 @@ interface SubscriberRow {
   transport: string;
   target_base_url: string;
   forward_token: string;
+  connection_token_hash: string;
+  environment_id: string | null;
   created_at: number;
   last_heartbeat_at: number;
   expires_at: number;
@@ -116,6 +127,17 @@ export class RouteDurableObject extends DurableObject<Env> {
         INSERT INTO _sql_schema_migrations (id) VALUES (2);
       `);
     }
+
+    if (currentVersion < 3) {
+      this.ctx.storage.sql.exec(`
+        ALTER TABLE subscribers ADD COLUMN environment_id TEXT;
+        ALTER TABLE subscribers ADD COLUMN connection_token_hash TEXT NOT NULL DEFAULT '';
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_subscribers_environment_id
+          ON subscribers (environment_id)
+          WHERE environment_id IS NOT NULL;
+        INSERT INTO _sql_schema_migrations (id) VALUES (3);
+      `);
+    }
   }
 
   async fetch(request: Request): Promise<Response> {
@@ -129,35 +151,35 @@ export class RouteDurableObject extends DurableObject<Env> {
       return Response.json({ error: "invalid_tunnel_path" }, { status: 400 });
     }
 
+    const environmentParam = url.searchParams.get("environmentId");
+    const environmentId = parseEnvironmentId(environmentParam);
+    if (environmentParam && !environmentId) {
+      return Response.json({ error: "invalid_environment_id" }, { status: 400 });
+    }
+
     const now = Date.now();
     this.purgeExpired(now);
     this.setRouteId(routeId);
 
-    const subscriberId = `sub_${randomHex(6)}`;
-    const forwardToken = `ft_${randomHex(18)}`;
-    this.ctx.storage.sql.exec(
-      `INSERT INTO subscribers
-        (id, target_base_url, created_at, last_heartbeat_at, expires_at, transport, forward_token)
-       VALUES (?, ?, ?, ?, ?, 'tunnel', ?)`,
-      subscriberId,
-      "",
-      now,
-      now,
-      now + SUBSCRIBER_TTL_MS,
-      forwardToken
-    );
+    const attached = await this.reclaimOrCreate({
+      environmentId,
+      transport: "tunnel",
+      targetBaseUrl: ""
+    });
     await this.syncIndex();
 
     const pair = new WebSocketPair();
     const [client, server] = Object.values(pair);
-    this.ctx.acceptWebSocket(server, [subscriberId]);
+    this.ctx.acceptWebSocket(server, [attached.subscriberId]);
     server.send(
       JSON.stringify({
         type: "hello",
         v: TUNNEL_PROTOCOL_VERSION,
-        subscriberId,
+        subscriberId: attached.subscriberId,
         routeId,
-        forwardToken
+        forwardToken: attached.forwardToken,
+        connectionToken: attached.connectionToken,
+        ...(environmentId ? { environmentId } : {})
       })
     );
 
@@ -178,6 +200,13 @@ export class RouteDurableObject extends DurableObject<Env> {
     try {
       parsed = parseJsonMessage(text);
     } catch {
+      return;
+    }
+    if (isTunnelHeartbeat(parsed)) {
+      const [subscriberId] = this.ctx.getTags(ws);
+      if (subscriberId) {
+        this.extendSubscriber(subscriberId);
+      }
       return;
     }
     if (!isTunnelResponse(parsed) && !isTunnelError(parsed)) {
@@ -207,37 +236,31 @@ export class RouteDurableObject extends DurableObject<Env> {
 
   async register(
     targetBaseUrl: string,
-    routeId: string
+    routeId: string,
+    environmentId?: string | null
   ): Promise<{
     subscriberId: string;
     expiresIn: number;
     forwardToken: string;
+    connectionToken: string;
   }> {
     const normalized = validateTargetBaseUrl(targetBaseUrl);
     const now = Date.now();
     this.purgeExpired(now);
     this.setRouteId(routeId);
 
-    const subscriberId = `sub_${randomHex(6)}`;
-    const forwardToken = `ft_${randomHex(18)}`;
-    const expiresAt = now + SUBSCRIBER_TTL_MS;
-    this.ctx.storage.sql.exec(
-      `INSERT INTO subscribers
-        (id, target_base_url, created_at, last_heartbeat_at, expires_at, transport, forward_token)
-       VALUES (?, ?, ?, ?, ?, 'public', ?)`,
-      subscriberId,
-      normalized,
-      now,
-      now,
-      expiresAt,
-      forwardToken
-    );
+    const attached = await this.reclaimOrCreate({
+      environmentId: environmentId || null,
+      transport: "public",
+      targetBaseUrl: normalized
+    });
     await this.scheduleCleanup(now);
     await this.syncIndex();
     return {
-      subscriberId,
+      subscriberId: attached.subscriberId,
       expiresIn: SUBSCRIBER_TTL_MS / 1000,
-      forwardToken
+      forwardToken: attached.forwardToken,
+      connectionToken: attached.connectionToken
     };
   }
 
@@ -267,6 +290,14 @@ export class RouteDurableObject extends DurableObject<Env> {
     );
     await this.scheduleCleanup(now);
     return { expiresIn: SUBSCRIBER_TTL_MS / 1000 };
+  }
+
+  async verifyConnectionToken(subscriberId: string, token: string): Promise<boolean> {
+    const row = this.lookupSubscriber(subscriberId);
+    if (!row) {
+      return false;
+    }
+    return connectionTokenMatches(token, row.connection_token_hash);
   }
 
   async deregister(subscriberId: string): Promise<boolean> {
@@ -319,12 +350,14 @@ export class RouteDurableObject extends DurableObject<Env> {
     this.purgeExpired(now);
     const rows = this.ctx.storage.sql
       .exec<SubscriberRow>(
-        `SELECT id, target_base_url, created_at, last_heartbeat_at, expires_at, transport, forward_token
+        `SELECT id, target_base_url, created_at, last_heartbeat_at, expires_at, transport, forward_token, connection_token_hash, environment_id
          FROM subscribers
          ORDER BY created_at ASC`
       )
       .toArray();
-    return rows.map(toSubscriber);
+    return rows
+      .filter((row) => row.transport !== "tunnel" || this.liveSocket(row.id) || Boolean(row.environment_id))
+      .map(toSubscriber);
   }
 
   async fanOut(payload: IngressPayload): Promise<void> {
@@ -481,7 +514,11 @@ export class RouteDurableObject extends DurableObject<Env> {
   ): Promise<DeliverySubscriber | null> {
     if (state) {
       const signed = this.env.DEV_ROUTER_SECRET
-        ? await unwrapOAuthState(this.env.DEV_ROUTER_SECRET, state)
+        ? await unwrapOAuthStateForRoute({
+            operatorSecret: this.env.DEV_ROUTER_SECRET,
+            routeSecret: await deriveRouteSecret(this.env.DEV_ROUTER_SECRET, this.getRouteId() ?? ""),
+            state
+          })
         : null;
       if (signed) {
         const routeId = this.getRouteId();
@@ -512,23 +549,95 @@ export class RouteDurableObject extends DurableObject<Env> {
     this.purgeExpired(now);
     const rows = this.ctx.storage.sql
       .exec<SubscriberRow>(
-        `SELECT id, target_base_url, created_at, last_heartbeat_at, expires_at, transport, forward_token
+        `SELECT id, target_base_url, created_at, last_heartbeat_at, expires_at, transport, forward_token, connection_token_hash, environment_id
          FROM subscribers
          ORDER BY created_at ASC`
       )
       .toArray();
-    return rows.map((row) => ({
-      id: row.id,
-      transport: row.transport === "tunnel" ? "tunnel" : "public",
-      targetBaseUrl: row.target_base_url,
-      forwardToken: this.ensureForwardToken(row)
-    }));
+    return rows
+      .filter((row) => row.transport !== "tunnel" || this.liveSocket(row.id))
+      .map((row) => ({
+        id: row.id,
+        transport: row.transport === "tunnel" ? "tunnel" : "public",
+        targetBaseUrl: row.target_base_url,
+        forwardToken: this.ensureForwardToken(row)
+      }));
+  }
+
+  private async reclaimOrCreate(options: {
+    environmentId: string | null;
+    transport: "public" | "tunnel";
+    targetBaseUrl: string;
+  }): Promise<{
+    subscriberId: string;
+    forwardToken: string;
+    connectionToken: string;
+  }> {
+    const now = Date.now();
+    const existing = options.environmentId
+      ? this.lookupSubscriberByEnvironment(options.environmentId)
+      : undefined;
+
+    const connectionToken = randomConnectionToken();
+    const connectionTokenHash = await hashConnectionToken(connectionToken);
+
+    if (existing) {
+      this.closeSockets(existing.id);
+      this.failPendingForSubscriber(existing.id, new Error("subscriber_replaced"));
+      const forwardToken = this.ensureForwardToken(existing);
+      this.ctx.storage.sql.exec(
+        `UPDATE subscribers
+         SET transport = ?, target_base_url = ?, connection_token_hash = ?,
+             last_heartbeat_at = ?, expires_at = ?, environment_id = ?
+         WHERE id = ?`,
+        options.transport,
+        options.targetBaseUrl,
+        connectionTokenHash,
+        now,
+        now + SUBSCRIBER_TTL_MS,
+        options.environmentId,
+        existing.id
+      );
+      return {
+        subscriberId: existing.id,
+        forwardToken,
+        connectionToken
+      };
+    }
+
+    const subscriberId = `sub_${randomHex(6)}`;
+    const forwardToken = `ft_${randomHex(18)}`;
+    this.ctx.storage.sql.exec(
+      `INSERT INTO subscribers
+        (id, target_base_url, created_at, last_heartbeat_at, expires_at, transport, forward_token, connection_token_hash, environment_id)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      subscriberId,
+      options.targetBaseUrl,
+      now,
+      now,
+      now + SUBSCRIBER_TTL_MS,
+      options.transport,
+      forwardToken,
+      connectionTokenHash,
+      options.environmentId
+    );
+    return { subscriberId, forwardToken, connectionToken };
+  }
+
+  private lookupSubscriberByEnvironment(environmentId: string): SubscriberRow | undefined {
+    return this.ctx.storage.sql
+      .exec<SubscriberRow>(
+        `SELECT id, target_base_url, created_at, last_heartbeat_at, expires_at, transport, forward_token, connection_token_hash, environment_id
+         FROM subscribers WHERE environment_id = ?`,
+        environmentId
+      )
+      .toArray()[0];
   }
 
   private lookupSubscriber(subscriberId: string): SubscriberRow | undefined {
     return this.ctx.storage.sql
       .exec<SubscriberRow>(
-        `SELECT id, target_base_url, created_at, last_heartbeat_at, expires_at, transport, forward_token
+        `SELECT id, target_base_url, created_at, last_heartbeat_at, expires_at, transport, forward_token, connection_token_hash, environment_id
          FROM subscribers WHERE id = ?`,
         subscriberId
       )
@@ -549,10 +658,17 @@ export class RouteDurableObject extends DurableObject<Env> {
   }
 
   private touchSubscriber(subscriberId: string): void {
+    this.extendSubscriber(subscriberId);
+  }
+
+  private extendSubscriber(subscriberId: string): void {
     const now = Date.now();
     this.ctx.storage.sql.exec(
-      "UPDATE subscribers SET last_heartbeat_at = ? WHERE id = ?",
+      `UPDATE subscribers
+       SET last_heartbeat_at = ?, expires_at = ?
+       WHERE id = ?`,
       now,
+      now + SUBSCRIBER_TTL_MS,
       subscriberId
     );
   }
@@ -563,6 +679,21 @@ export class RouteDurableObject extends DurableObject<Env> {
       return;
     }
     this.failPendingForSubscriber(subscriberId, new Error("tunnel_disconnected"));
+    const row = this.lookupSubscriber(subscriberId);
+    if (row?.environment_id) {
+      const now = Date.now();
+      this.ctx.storage.sql.exec(
+        `UPDATE subscribers
+         SET last_heartbeat_at = ?, expires_at = ?
+         WHERE id = ?`,
+        now,
+        now + SUBSCRIBER_TTL_MS,
+        subscriberId
+      );
+      await this.scheduleCleanup(now);
+      await this.syncIndex();
+      return;
+    }
     this.ctx.storage.sql.exec("DELETE FROM subscribers WHERE id = ?", subscriberId);
     this.ctx.storage.sql.exec(
       "DELETE FROM oauth_bindings WHERE subscriber_id = ?",
@@ -601,21 +732,74 @@ export class RouteDurableObject extends DurableObject<Env> {
       "DELETE FROM subscribers WHERE transport = 'public' AND expires_at <= ?",
       now
     );
-    this.ctx.storage.sql.exec("DELETE FROM oauth_bindings WHERE expires_at <= ?", now);
-    this.purgeDisconnectedTunnels();
-  }
-
-  private purgeDisconnectedTunnels(): void {
-    const rows = this.ctx.storage.sql
-      .exec<{ id: string }>("SELECT id FROM subscribers WHERE transport = 'tunnel'")
+    const expiredTunnels = this.ctx.storage.sql
+      .exec<{ id: string }>(
+        "SELECT id FROM subscribers WHERE transport = 'tunnel' AND expires_at <= ?",
+        now
+      )
       .toArray();
-    for (const row of rows) {
+    for (const row of expiredTunnels) {
       if (this.liveSocket(row.id) || this.ctx.getWebSockets(row.id).length > 0) {
+        this.extendSubscriber(row.id);
         continue;
       }
       this.failPendingForSubscriber(row.id, new Error("tunnel_disconnected"));
       this.ctx.storage.sql.exec("DELETE FROM subscribers WHERE id = ?", row.id);
       this.ctx.storage.sql.exec("DELETE FROM oauth_bindings WHERE subscriber_id = ?", row.id);
+    }
+    this.ctx.storage.sql.exec("DELETE FROM oauth_bindings WHERE expires_at <= ?", now);
+    this.purgeDisconnectedTunnels();
+    this.expireStaleTunnels(now);
+  }
+
+  private purgeDisconnectedTunnels(): void {
+    const rows = this.ctx.storage.sql
+      .exec<{ id: string; environment_id: string | null }>(
+        "SELECT id, environment_id FROM subscribers WHERE transport = 'tunnel'"
+      )
+      .toArray();
+    for (const row of rows) {
+      if (this.liveSocket(row.id) || this.ctx.getWebSockets(row.id).length > 0) {
+        continue;
+      }
+      if (row.environment_id) {
+        continue;
+      }
+      this.failPendingForSubscriber(row.id, new Error("tunnel_disconnected"));
+      this.ctx.storage.sql.exec("DELETE FROM subscribers WHERE id = ?", row.id);
+      this.ctx.storage.sql.exec("DELETE FROM oauth_bindings WHERE subscriber_id = ?", row.id);
+    }
+  }
+
+  private expireStaleTunnels(now: number): void {
+    const rows = this.ctx.storage.sql
+      .exec<SubscriberRow>(
+        `SELECT id, target_base_url, created_at, last_heartbeat_at, expires_at, transport, forward_token, connection_token_hash, environment_id
+         FROM subscribers WHERE transport = 'tunnel'`
+      )
+      .toArray();
+    for (const row of rows) {
+      const ws = this.liveSocket(row.id);
+      if (!ws) {
+        continue;
+      }
+      let lastSeen = row.last_heartbeat_at || row.created_at;
+      try {
+        const auto = this.ctx.getWebSocketAutoResponseTimestamp(ws);
+        if (auto) {
+          lastSeen = Math.max(lastSeen, auto.getTime());
+        }
+      } catch {
+        // Miniflare may not expose auto-response timestamps.
+      }
+      if (now - lastSeen <= TUNNEL_STALE_MS) {
+        continue;
+      }
+      try {
+        ws.close(4000, "stale_tunnel");
+      } catch {
+        // Already closing.
+      }
     }
   }
 
@@ -656,14 +840,22 @@ export class RouteDurableObject extends DurableObject<Env> {
   private async scheduleCleanup(now: number): Promise<void> {
     const next = this.ctx.storage.sql
       .exec<{ expires_at: number }>(
-        "SELECT MIN(expires_at) as expires_at FROM subscribers WHERE transport = 'public'"
+        "SELECT MIN(expires_at) as expires_at FROM subscribers"
       )
       .toArray()[0];
-    if (!next?.expires_at) {
+    const hasLiveTunnels = this.ctx.storage.sql
+      .exec<{ count: number }>(
+        "SELECT COUNT(*) as count FROM subscribers WHERE transport = 'tunnel'"
+      )
+      .one().count;
+    const candidates = [next?.expires_at, hasLiveTunnels > 0 ? now + 30_000 : undefined].filter(
+      (value): value is number => typeof value === "number" && value > 0
+    );
+    if (candidates.length === 0) {
       await this.ctx.storage.deleteAlarm();
       return;
     }
-    await this.ctx.storage.setAlarm(Math.max(next.expires_at, now + 1_000));
+    await this.ctx.storage.setAlarm(Math.max(Math.min(...candidates), now + 1_000));
   }
 }
 
@@ -684,6 +876,13 @@ function bodyFromPayload(payload: IngressPayload): ArrayBuffer {
   const copy = new Uint8Array(bytes.byteLength);
   copy.set(bytes);
   return copy.buffer as ArrayBuffer;
+}
+
+function parseEnvironmentId(value: string | null): string | null {
+  if (!value) {
+    return null;
+  }
+  return isAllowedEnvironmentId(value) ? value : null;
 }
 
 function selectedTunnelProtocol(header: string | null): string | undefined {
