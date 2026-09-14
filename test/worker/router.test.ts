@@ -131,6 +131,7 @@ describe("dashboard", () => {
     const html = await fetchWorker("https://dev-webhooks.example.com/dashboard");
     expect(html.status).toBe(200);
     expect(html.headers.get("www-authenticate")).toBeNull();
+    expect(html.headers.get("content-security-policy")).toMatch(/default-src 'none'/);
     const page = await html.text();
     expect(page).toContain("Dashboard password");
     expect(page).not.toContain("Environment id");
@@ -165,6 +166,22 @@ describe("dashboard", () => {
     expect(html).toContain("Dev router");
     expect(html).toContain("No active connections.");
     expect(html).toContain("Environment id");
+  });
+
+  it("does not embed subscriber JSON in a script tag", async () => {
+    await register(
+      "dash-xss",
+      "https://evil.example/?x=</script><script>alert(1)",
+      "amp-thread-xss"
+    );
+    const response = await fetchWorker("https://dev-webhooks.example.com/dashboard", {
+      headers: await dashboardHeaders()
+    });
+    expect(response.status).toBe(200);
+    expect(response.headers.get("content-security-policy")).toMatch(/default-src 'none'/);
+    const html = await response.text();
+    expect(html).not.toMatch(/const status = /);
+    expect(html).not.toContain("</script><script>alert(1)");
   });
 
   it("lists active subscribers as JSON including environment id", async () => {

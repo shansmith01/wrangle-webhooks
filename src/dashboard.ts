@@ -170,7 +170,6 @@ export function dashboardHtml(status: DashboardStatus): string {
     </p>
   </main>
   <script>
-    const status = ${JSON.stringify(status)};
     function fmt(ts) {
       if (!ts) return "—";
       const d = new Date(ts);
@@ -209,13 +208,13 @@ export function dashboardHtml(status: DashboardStatus): string {
         "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"
       }[ch]));
     }
-    render(status);
     async function refresh() {
       try {
         const res = await fetch("/dashboard/status", { cache: "no-store", credentials: "same-origin" });
         if (res.ok) render(await res.json());
       } catch {}
     }
+    void refresh();
     setInterval(refresh, 5000);
   </script>
 </body>
@@ -262,4 +261,15 @@ function escapeHtml(value: string): string {
         return "&#39;";
     }
   });
+}
+
+export const DASHBOARD_CSP =
+  "default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; connect-src 'self'; form-action 'self'; base-uri 'none'";
+
+export function dashboardHtmlHeaders(): Record<string, string> {
+  return {
+    "Content-Type": "text/html; charset=utf-8",
+    "Cache-Control": "no-store",
+    "Content-Security-Policy": DASHBOARD_CSP
+  };
 }

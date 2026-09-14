@@ -12,6 +12,7 @@ import {
 import { deriveRouteSecret, matchJoinCredential } from "./credentials";
 import {
   dashboardHtml,
+  dashboardHtmlHeaders,
   dashboardLoginHtml,
   dashboardStatus,
   type DashboardRoute
@@ -477,10 +478,7 @@ async function handleDashboard(
     const routes = await loadDashboardRoutes(env);
     const status = dashboardStatus(Boolean(env.DEV_ROUTER_SECRET), routes);
     return new Response(dashboardHtml(status), {
-      headers: {
-        "Content-Type": "text/html; charset=utf-8",
-        "Cache-Control": "no-store"
-      }
+      headers: dashboardHtmlHeaders()
     });
   }
 
@@ -490,10 +488,7 @@ async function handleDashboard(
 function dashboardLoginResponse(error?: string, status = 200): Response {
   return new Response(dashboardLoginHtml(error), {
     status,
-    headers: {
-      "Content-Type": "text/html; charset=utf-8",
-      "Cache-Control": "no-store"
-    }
+    headers: dashboardHtmlHeaders()
   });
 }
 
