@@ -15,7 +15,7 @@ metadata:
   purpose: Guidance for registering a cloud environment as a router subscriber using the CLI or DevRouterClient.
   type: core
   library: "@powerboard/dev-router"
-  library_version: "0.2.0"
+  library_version: "0.3.0"
 sources:
   - shansmith01/wrangle-webhooks:skills/connect/connect.md
   - shansmith01/wrangle-webhooks:src/cli.ts
