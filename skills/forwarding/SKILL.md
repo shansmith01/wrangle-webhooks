@@ -51,11 +51,11 @@ Fan-out runs in `waitUntil`. The public caller gets `202` `{ "accepted": true }`
 
 ### Return the subscriber response for OAuth
 
-OAuth callbacks (`state` plus `code`/`error`, or `/oauth/callback` / `/auth/callback`) wait for one subscriber and return its status, headers, and body. Correlate with `wrapOAuthState()`, `bindOAuthState()`, or `POST http://127.0.0.1:8790/oauth-states` from the app process. A single subscriber on the route is enough. Multiple subscribers without correlation return `409 oauth_unroutable`.
+OAuth callbacks (`state` plus `code`/`error`, or `/oauth/callback` / `/auth/callback`) wait for one subscriber and return its status, `Location`, and body. `Set-Cookie` is not copied onto the Worker host. Correlate with `wrapOAuthState()`, `bindOAuthState()`, or `POST http://127.0.0.1:8790/oauth-states` from the app process. A single subscriber on the route is enough. Multiple subscribers without correlation return `409 oauth_unroutable`.
 
 ### Preserve method, body, query, and forwardable headers
 
-Hop-by-hop headers are dropped. Reverse-tunnel `fetch()` derives `Host` from `localUrl`; `X-Forwarded-Host` keeps the public host so virtual-host proxies such as Portless can route. The Worker adds `X-Dev-Router-Route`, `X-Dev-Router-Subscriber`, `X-Dev-Router-Request-Id`, `X-Dev-Router-Token` (per-connection credential), and `X-Forwarded-*` when a client IP exists. It does not send `X-Dev-Router-Secret`.
+Hop-by-hop headers are dropped, including `Authorization` and `Cookie`. OAuth responses still return status, `Location`, and body; `Set-Cookie` is not copied onto the Worker host. Reverse-tunnel `fetch()` derives `Host` from `localUrl`; `X-Forwarded-Host` keeps the public host so virtual-host proxies such as Portless can route. The Worker adds `X-Dev-Router-Route`, `X-Dev-Router-Subscriber`, `X-Dev-Router-Request-Id`, `X-Dev-Router-Token` (per-connection credential), and `X-Forwarded-*` when a client IP exists. It does not send `X-Dev-Router-Secret`.
 
 ### Timeouts and isolation
 

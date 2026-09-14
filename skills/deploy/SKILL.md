@@ -55,7 +55,7 @@ Keep secrets in `.dev.vars` locally. Do not commit them.
 
 ### Dashboard
 
-`GET /dashboard` and `GET /dashboard.json` require HTTP Basic auth with `DEV_ROUTER_DASHBOARD_PASSWORD` (username may be blank). They list active routes, subscriber counts, transport, and environment id. They do not return `DEV_ROUTER_SECRET`, route credentials, connection tokens, or per-connection forward tokens.
+`GET /dashboard` is a password form that sets an HttpOnly `SameSite=Strict` cookie with `Path=/dashboard`. JSON is `GET /dashboard/status` (`/dashboard.json` redirects there so the cookie is sent). They list active routes, subscriber counts, transport, and environment id. They do not return `DEV_ROUTER_SECRET`, route credentials, connection tokens, or per-connection forward tokens.
 
 ## Common Mistakes
 
@@ -83,10 +83,10 @@ Source: `wrangler.jsonc`
 
 Wrong: assuming `/dashboard` is public, or that `Authorization: Bearer <DEV_ROUTER_SECRET>` unlocks it.
 
-Correct: `/dashboard` and `/dashboard.json` use HTTP Basic with `DEV_ROUTER_DASHBOARD_PASSWORD`. `/_router/*` join is bearer-protected (operator or route credential) with a timing-safe compare. Subscriber mutations need the operator secret or that connection’s token.
+Correct: `/dashboard` uses a `Path=/dashboard` session cookie after posting `DEV_ROUTER_DASHBOARD_PASSWORD` to `/dashboard/login`. `/_router/*` join is bearer-protected (operator or route credential) with a timing-safe compare. Subscriber mutations need the operator secret or that connection’s token.
 
 Source: `src/worker.ts`, `src/auth.ts`, `src/credentials.ts`
 
 ## Completion
 
-`wrangler deploy` succeeds, `DEV_ROUTER_SECRET` and `DEV_ROUTER_DASHBOARD_PASSWORD` are set, and `GET https://<host>/dashboard` prompts for the dashboard password. Mint a route credential for each connect style (`npx dev-router token` for root, `npx dev-router token --route nomads` for a named prefix) and give that to clients. Load `connect` for subscriber registration in remote cloud environments.
+`wrangler deploy` succeeds, `DEV_ROUTER_SECRET` and `DEV_ROUTER_DASHBOARD_PASSWORD` are set, and `GET https://<host>/dashboard` shows a password form. Mint a route credential for each connect style (`npx dev-router token` for root, `npx dev-router token --route nomads` for a named prefix) and give that to clients. Load `connect` for subscriber registration in remote cloud environments.

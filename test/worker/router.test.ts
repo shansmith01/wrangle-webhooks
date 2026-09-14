@@ -27,12 +27,25 @@ function authHeaders(extra?: HeadersInit): Headers {
   return headers;
 }
 
-function dashboardHeaders(extra?: HeadersInit): Headers {
+async function dashboardHeaders(extra?: HeadersInit): Promise<Headers> {
+  const login = await fetchWorker("https://dev-webhooks.example.com/dashboard/login", {
+    method: "POST",
+    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    body: `password=${encodeURIComponent(env.DEV_ROUTER_DASHBOARD_PASSWORD)}`,
+    redirect: "manual"
+  });
+  expect(login.status).toBe(303);
+  const setCookie =
+    typeof login.headers.getSetCookie === "function"
+      ? login.headers.getSetCookie()[0]
+      : login.headers.get("set-cookie");
+  expect(setCookie).toBeTruthy();
+  expect(setCookie).toContain("Path=/dashboard");
+  expect(setCookie).toContain("HttpOnly");
+  expect(setCookie).toContain("SameSite=Strict");
+  const cookie = (setCookie ?? "").split(";", 1)[0];
   const headers = new Headers(extra);
-  headers.set(
-    "Authorization",
-    `Basic ${btoa(`:${env.DEV_ROUTER_DASHBOARD_PASSWORD}`)}`
-  );
+  headers.set("Cookie", cookie);
   return headers;
 }
 
@@ -115,24 +128,35 @@ describe("management API", () => {
 describe("dashboard", () => {
   it("rejects unauthenticated HTML and JSON", async () => {
     const html = await fetchWorker("https://dev-webhooks.example.com/dashboard");
-    expect(html.status).toBe(401);
-    expect(html.headers.get("www-authenticate")).toMatch(/Basic/i);
+    expect(html.status).toBe(200);
+    expect(html.headers.get("www-authenticate")).toBeNull();
+    const page = await html.text();
+    expect(page).toContain("Dashboard password");
+    expect(page).not.toContain("Environment id");
 
-    const json = await fetchWorker("https://dev-webhooks.example.com/dashboard.json");
+    const json = await fetchWorker("https://dev-webhooks.example.com/dashboard/status");
     expect(json.status).toBe(401);
     expect(await json.json()).toEqual({ error: "unauthorized" });
   });
 
-  it("does not accept the management bearer token", async () => {
-    const response = await fetchWorker("https://dev-webhooks.example.com/dashboard", {
+  it("does not accept the management bearer token or HTTP Basic", async () => {
+    const bearer = await fetchWorker("https://dev-webhooks.example.com/dashboard", {
       headers: authHeaders()
     });
-    expect(response.status).toBe(401);
+    expect(bearer.status).toBe(200);
+    expect(await bearer.text()).toContain("Dashboard password");
+
+    const basic = await fetchWorker("https://dev-webhooks.example.com/dashboard/status", {
+      headers: {
+        Authorization: `Basic ${btoa(`:${env.DEV_ROUTER_DASHBOARD_PASSWORD}`)}`
+      }
+    });
+    expect(basic.status).toBe(401);
   });
 
-  it("serves HTML with the dashboard password", async () => {
+  it("serves HTML after a password login cookie", async () => {
     const response = await fetchWorker("https://dev-webhooks.example.com/dashboard", {
-      headers: dashboardHeaders()
+      headers: await dashboardHeaders()
     });
     expect(response.status).toBe(200);
     expect(response.headers.get("content-type")).toMatch(/text\/html/);
@@ -148,8 +172,8 @@ describe("dashboard", () => {
       "https://dev-dash.example",
       "amp-thread-dashboard"
     );
-    const response = await fetchWorker("https://dev-webhooks.example.com/dashboard.json", {
-      headers: dashboardHeaders()
+    const response = await fetchWorker("https://dev-webhooks.example.com/dashboard/status", {
+      headers: await dashboardHeaders()
     });
     expect(response.status).toBe(200);
     const body = (await response.json()) as {
@@ -178,13 +202,22 @@ describe("dashboard", () => {
     expect(route?.subscribers[0]?.environmentId).toBe("amp-thread-dashboard");
   });
 
+  it("redirects /dashboard.json under the cookie path", async () => {
+    const response = await fetchWorker("https://dev-webhooks.example.com/dashboard.json", {
+      redirect: "manual"
+    });
+    expect(response.status).toBe(308);
+    expect(new URL(response.headers.get("location") ?? "", "https://dev-webhooks.example.com").pathname).toBe(
+      "/dashboard/status"
+    );
+  });
+
   it("does not forward /dashboard to default subscribers", async () => {
     await register("", "https://dev-root.example");
-    const response = await fetchWorker("https://dev-webhooks.example.com/dashboard", {
-      headers: dashboardHeaders()
-    });
+    const response = await fetchWorker("https://dev-webhooks.example.com/dashboard");
     expect(response.status).toBe(200);
     expect(response.headers.get("content-type")).toMatch(/text\/html/);
+    expect(await response.text()).toContain("Dashboard password");
   });
 });
 
@@ -225,6 +258,9 @@ describe("public routing", () => {
         headers: {
           "Content-Type": "application/json",
           "Stripe-Signature": "t=1,v1=sig",
+          "X-Signature": "goki-hmac",
+          Authorization: "Bearer should-not-forward",
+          Cookie: "dashboard=should-not-forward",
           "CF-Connecting-IP": "203.0.113.10"
         },
         body: '{"ok":true}'
@@ -241,6 +277,13 @@ describe("public routing", () => {
     const tokenHeader =
       headerBag["x-dev-router-token"] ?? headerBag["X-Dev-Router-Token"];
     expect(tokenHeader).toBeTruthy();
+    const authorization =
+      headerBag.authorization ?? headerBag.Authorization;
+    const cookie = headerBag.cookie ?? headerBag.Cookie;
+    expect(authorization).toBeUndefined();
+    expect(cookie).toBeUndefined();
+    const signature = headerBag["x-signature"] ?? headerBag["X-Signature"];
+    expect(signature).toBe("goki-hmac");
   });
 
   it("does not forward the reserved management namespace", async () => {
@@ -274,7 +317,12 @@ describe("public routing", () => {
     fetchMock
       .get("https://dev-oauth-a.example")
       .intercept({ path: /\/oauth\/callback/, method: "GET" })
-      .reply(302, "redirect-a", { headers: { Location: "https://app.example/a" } });
+      .reply(302, "redirect-a", {
+        headers: {
+          Location: "https://app.example/a",
+          "Set-Cookie": "session=abc; Path=/"
+        }
+      });
 
     const bind = await fetchWorker(
       `https://dev-webhooks.example.com/_router/routes/oauth-route/subscribers/${first.subscriberId}/oauth-states`,
@@ -291,6 +339,7 @@ describe("public routing", () => {
     );
     expect(response.status).toBe(302);
     expect(response.headers.get("Location")).toBe("https://app.example/a");
+    expect(response.headers.get("Set-Cookie")).toBeNull();
   });
 
   it("does not fan an uncorrelated OAuth callback to every subscriber", async () => {
@@ -346,13 +395,17 @@ describe("reverse tunnel", () => {
         type: "response",
         id: incoming.id,
         status: 302,
-        headers: [["Location", "https://app.example/landed"]],
+        headers: [
+          ["Location", "https://app.example/landed"],
+          ["Set-Cookie", "session=abc; Path=/"]
+        ],
         body: ""
       })
     );
     const response = await oauthPromise;
     expect(response.status).toBe(302);
     expect(response.headers.get("Location")).toBe("https://app.example/landed");
+    expect(response.headers.get("Set-Cookie")).toBeNull();
     await waitOnExecutionContext(ctx);
     ws.close(1000, "done");
   });

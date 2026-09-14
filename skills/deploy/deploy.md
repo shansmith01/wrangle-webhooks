@@ -32,4 +32,4 @@ npm test
 npx wrangler dev
 ```
 
-The dashboard is password-gated HTML at `/dashboard` and JSON at `/dashboard.json` (HTTP Basic, `DEV_ROUTER_DASHBOARD_PASSWORD`; username may be blank). It lists active routes, subscriber counts, transport (`public` or `tunnel`), and environment id. It does not expose `DEV_ROUTER_SECRET`, route credentials, connection tokens, or per-connection forward tokens.
+The dashboard is password-gated HTML at `/dashboard` and JSON at `/dashboard/status`. Sign-in is `POST /dashboard/login` with `DEV_ROUTER_DASHBOARD_PASSWORD`; that sets an HttpOnly `SameSite=Strict` cookie with `Path=/dashboard` so it is not sent on webhook or OAuth paths. `/dashboard.json` redirects to `/dashboard/status`. The dashboard lists active routes, subscriber counts, transport (`public` or `tunnel`), and environment id. It does not expose `DEV_ROUTER_SECRET`, route credentials, connection tokens, or per-connection forward tokens.

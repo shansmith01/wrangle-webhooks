@@ -20,7 +20,10 @@ const HOP_BY_HOP_HEADERS = new Set([
   "transfer-encoding",
   "upgrade",
   "host",
-  "content-length"
+  "content-length",
+  "authorization",
+  "cookie",
+  "set-cookie"
 ]);
 
 export class TargetBaseUrlError extends Error {

@@ -29,7 +29,7 @@ The original method, raw body, query string, and relevant headers are preserved.
 
 Webhooks use **fan-out**. Every active subscriber receives a copy. The public caller gets `202 Accepted` `{ "accepted": true }` as soon as fan-out is accepted. That is **not** delivery proof: subscriber status codes are not propagated. Confirm the request in **each** subscriber’s logs before treating a fan-out test as successful.
 
-OAuth callbacks use **correlated single-target routing** and **return the subscriber response** (status, headers, body). That is required so authorization-code exchanges and redirects work. One `code` must go only to the subscriber that created its `state`.
+OAuth callbacks use **correlated single-target routing** and **return the subscriber response** (status, `Location`, body). `Set-Cookie` is not copied onto the Worker host. That is required so authorization-code exchanges and redirects work. One `code` must go only to the subscriber that created its `state`.
 
 A request is treated as OAuth when:
 
@@ -57,7 +57,7 @@ Forwarded requests include:
 
 The Worker does **not** send `X-Dev-Router-Secret`. Do not compare a hop header to the management bearer token.
 
-Hop-by-hop headers (`connection`, `keep-alive`, `host`, `content-length`, and similar) are not forwarded. Reverse-tunnel delivery also drops `Host` so the sidecar `fetch()` sets it from `localUrl` (for example `http://nomads-app-api.localhost:1355`); `X-Forwarded-Host` still carries the public host.
+Hop-by-hop headers (`connection`, `keep-alive`, `host`, `content-length`, and similar) are not forwarded. `Authorization` and `Cookie` are stripped on the inbound hop. OAuth responses keep status, `Location`, and body; `Set-Cookie` is not copied onto the Worker host. Reverse-tunnel delivery also drops `Host` so the sidecar `fetch()` sets it from `localUrl` (for example `http://nomads-app-api.localhost:1355`); `X-Forwarded-Host` still carries the public host.
 
 `_router` and `dashboard` are reserved path prefixes and are not valid `routeId` values.
 

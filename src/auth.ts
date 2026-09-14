@@ -1,44 +1,67 @@
 import { decodeTunnelSubprotocolSecret } from "./tunnel-protocol";
 
+export const DASHBOARD_COOKIE_NAME = "dev_router_dashboard";
+export const DASHBOARD_SESSION_TTL_MS = 7 * 24 * 60 * 60 * 1000;
+
 export function unauthorized(): Response {
   return Response.json({ error: "unauthorized" }, { status: 401 });
 }
 
-export function unauthorizedDashboard(json: boolean): Response {
-  const headers = {
-    "WWW-Authenticate": 'Basic realm="Dev router dashboard"',
-    "Cache-Control": "no-store"
-  };
-  if (json) {
-    return Response.json({ error: "unauthorized" }, { status: 401, headers });
-  }
-  return new Response("Unauthorized", { status: 401, headers });
+export function unauthorizedDashboard(): Response {
+  return Response.json(
+    { error: "unauthorized" },
+    { status: 401, headers: { "Cache-Control": "no-store" } }
+  );
 }
 
-export function readBasicAuthPassword(request: Request): string | null {
-  const header = request.headers.get("Authorization") ?? "";
-  const prefix = "Basic ";
-  if (!header.startsWith(prefix) || header.length <= prefix.length) {
-    return null;
-  }
-  try {
-    const decoded = atob(header.slice(prefix.length).trim());
-    const colon = decoded.indexOf(":");
-    if (colon === -1) {
-      return null;
-    }
-    return decoded.slice(colon + 1);
-  } catch {
-    return null;
-  }
-}
-
-export function requireDashboardAuth(request: Request, password: string): boolean {
+export async function requireDashboardAuth(
+  request: Request,
+  password: string
+): Promise<boolean> {
   if (!password) {
     return false;
   }
-  const provided = readBasicAuthPassword(request);
-  return provided !== null && timingSafeEqualString(provided, password);
+  const session = readDashboardSession(request);
+  if (!session) {
+    return false;
+  }
+  return verifyDashboardSession(session, password);
+}
+
+export async function mintDashboardSession(
+  password: string,
+  now = Date.now()
+): Promise<string> {
+  const exp = now + DASHBOARD_SESSION_TTL_MS;
+  const mac = await hmacSha256Base64Url(password, dashboardSessionPayload(exp));
+  return `${exp}.${mac}`;
+}
+
+export async function verifyDashboardSession(
+  session: string,
+  password: string,
+  now = Date.now()
+): Promise<boolean> {
+  const split = session.lastIndexOf(".");
+  if (split <= 0) {
+    return false;
+  }
+  const expRaw = session.slice(0, split);
+  const mac = session.slice(split + 1);
+  const exp = Number.parseInt(expRaw, 10);
+  if (!Number.isFinite(exp) || exp < now) {
+    return false;
+  }
+  const expected = await hmacSha256Base64Url(password, dashboardSessionPayload(exp));
+  return timingSafeEqualString(mac, expected);
+}
+
+export function dashboardSessionSetCookie(request: Request, session: string): string {
+  return serializeDashboardCookie(request, session, DASHBOARD_SESSION_TTL_MS / 1000);
+}
+
+export function dashboardSessionClearCookie(request: Request): string {
+  return serializeDashboardCookie(request, "", 0);
 }
 
 export function timingSafeEqualString(left: string, right: string): boolean {
@@ -65,4 +88,40 @@ export function readManagementSecret(request: Request): string | null {
     return header.slice(prefix.length);
   }
   return decodeTunnelSubprotocolSecret(request.headers.get("Sec-WebSocket-Protocol"));
+}
+
+function readDashboardSession(request: Request): string | null {
+  const header = request.headers.get("Cookie") ?? "";
+  for (const part of header.split(";")) {
+    const trimmed = part.trim();
+    const eq = trimmed.indexOf("=");
+    if (eq <= 0) {
+      continue;
+    }
+    if (trimmed.slice(0, eq) === DASHBOARD_COOKIE_NAME) {
+      return trimmed.slice(eq + 1);
+    }
+  }
+  return null;
+}
+
+function serializeDashboardCookie(request: Request, value: string, maxAge: number): string {
+  const secure = new URL(request.url).protocol === "https:" ? "; Secure" : "";
+  return `${DASHBOARD_COOKIE_NAME}=${value}; Path=/dashboard; Max-Age=${Math.trunc(maxAge)}; HttpOnly; SameSite=Strict${secure}`;
+}
+
+function dashboardSessionPayload(exp: number): string {
+  return `dev-router:dashboard:${exp}`;
+}
+
+async function hmacSha256Base64Url(secret: string, data: string): Promise<string> {
+  const key = await crypto.subtle.importKey(
+    "raw",
+    new TextEncoder().encode(secret),
+    { name: "HMAC", hash: "SHA-256" },
+    false,
+    ["sign"]
+  );
+  const signature = await crypto.subtle.sign("HMAC", key, new TextEncoder().encode(data));
+  return Buffer.from(signature).toString("base64url");
 }

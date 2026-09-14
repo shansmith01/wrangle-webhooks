@@ -150,6 +150,10 @@ describe("shouldForwardHeader", () => {
     expect(shouldForwardHeader("Connection")).toBe(false);
     expect(shouldForwardHeader("Content-Length")).toBe(false);
     expect(shouldForwardHeader("Stripe-Signature")).toBe(true);
+    expect(shouldForwardHeader("X-Signature")).toBe(true);
     expect(shouldForwardHeader("Content-Type")).toBe(true);
+    expect(shouldForwardHeader("Authorization")).toBe(false);
+    expect(shouldForwardHeader("Cookie")).toBe(false);
+    expect(shouldForwardHeader("Set-Cookie")).toBe(false);
   });
 });

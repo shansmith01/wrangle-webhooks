@@ -30,14 +30,7 @@ export function dashboardStatus(
   };
 }
 
-export function dashboardHtml(status: DashboardStatus): string {
-  return `<!DOCTYPE html>
-<html lang="en">
-<head>
-  <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Dev router dashboard</title>
-  <style>
+const DASHBOARD_CSS = `
     :root {
       color-scheme: light dark;
       --bg: #0f1419;
@@ -89,8 +82,64 @@ export function dashboardHtml(status: DashboardStatus): string {
     th { color: var(--muted); font-weight: 600; }
     code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; word-break: break-all; }
     .empty { color: var(--muted); padding: 24px; text-align: center; }
-    .meta { color: var(--muted); font-size: 12px; margin-top: 20px; }
-  </style>
+    .meta { color: var(--muted); font-size: 12px; margin-top: 20px; display: flex; gap: 12px; align-items: center; flex-wrap: wrap; }
+    .meta form { margin: 0; }
+    .meta button, .login button {
+      font: inherit;
+      color: var(--text);
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 6px 10px;
+      cursor: pointer;
+    }
+    .login { max-width: 360px; }
+    .login label { display: block; color: var(--muted); font-size: 12px; text-transform: uppercase; letter-spacing: 0.04em; margin-bottom: 6px; }
+    .login input {
+      width: 100%;
+      font: inherit;
+      color: var(--text);
+      background: var(--bg);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 10px 12px;
+      margin-bottom: 12px;
+    }
+    .error { color: var(--warn); margin: 0 0 12px; }
+`;
+
+export function dashboardLoginHtml(error?: string): string {
+  return `<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Dev router dashboard</title>
+  <style>${DASHBOARD_CSS}</style>
+</head>
+<body>
+  <main>
+    <h1>Dev router</h1>
+    <p class="lede">Sign in to view worker health and live subscriber connections.</p>
+    <form class="card login" method="post" action="/dashboard/login">
+      <label for="password">Dashboard password</label>
+      ${error ? `<p class="error">${escapeHtml(error)}</p>` : ""}
+      <input id="password" name="password" type="password" autocomplete="current-password" required />
+      <button type="submit">Sign in</button>
+    </form>
+  </main>
+</body>
+</html>`;
+}
+
+export function dashboardHtml(status: DashboardStatus): string {
+  return `<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Dev router dashboard</title>
+  <style>${DASHBOARD_CSS}</style>
 </head>
 <body>
   <main>
@@ -115,7 +164,10 @@ export function dashboardHtml(status: DashboardStatus): string {
       </div>
     </div>
     <div id="routes">${renderRoutes(status.routes)}</div>
-    <p class="meta">Updated <span id="updated">${escapeHtml(status.generatedAt)}</span> · auto-refresh 5s</p>
+    <p class="meta">
+      <span>Updated <span id="updated">${escapeHtml(status.generatedAt)}</span> · auto-refresh 5s</span>
+      <form method="post" action="/dashboard/logout"><button type="submit">Sign out</button></form>
+    </p>
   </main>
   <script>
     const status = ${JSON.stringify(status)};
@@ -160,7 +212,7 @@ export function dashboardHtml(status: DashboardStatus): string {
     render(status);
     async function refresh() {
       try {
-        const res = await fetch("/dashboard.json", { cache: "no-store", credentials: "same-origin" });
+        const res = await fetch("/dashboard/status", { cache: "no-store", credentials: "same-origin" });
         if (res.ok) render(await res.json());
       } catch {}
     }

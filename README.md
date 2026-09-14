@@ -190,11 +190,11 @@ Task documentation and Agent Skills:
 
 **Webhooks** fan out to every subscriber. The public caller receives `202` `{ "accepted": true }` as soon as the Worker accepts fan-out. That is **not** delivery proof: subscriber status codes are not propagated, and a 202 can succeed while a replica never handled the request. Confirm the payload in **each** subscriber’s logs before treating a fan-out test as successful.
 
-**OAuth** is single-target and returns the subscriber response (including redirects). Correlate with `wrapOAuthState()` / `bindOAuthState()` on the sidecar connection, or `POST http://127.0.0.1:8790/oauth-states` from the app process. If a route has exactly one subscriber, that subscriber is used. Multiple subscribers without a matching `state` return `409` `{ "error": "oauth_unroutable" }`.
+**OAuth** is single-target and returns the subscriber response (status, `Location`, body). `Set-Cookie` is not copied onto the Worker host. Correlate with `wrapOAuthState()` / `bindOAuthState()` on the sidecar connection, or `POST http://127.0.0.1:8790/oauth-states` from the app process. If a route has exactly one subscriber, that subscriber is used. Multiple subscribers without a matching `state` return `409` `{ "error": "oauth_unroutable" }`.
 
 No subscribers → `404` `{ "error": "route_not_found" }`.
 
-Forwarded requests keep method, body, query string, and non-hop-by-hop headers, plus `X-Dev-Router-Route`, `X-Dev-Router-Subscriber`, `X-Dev-Router-Request-Id`, `X-Dev-Router-Token` (per-connection hop credential, not the management secret), and `X-Forwarded-*` when a client IP exists. Reverse-tunnel `Host` is taken from `localUrl`; `X-Forwarded-Host` keeps the public host. The Worker does not send `X-Dev-Router-Secret`. Each delivery has a 10s timeout and does not follow redirects.
+Forwarded requests keep method, body, query string, and non-hop-by-hop headers, plus `X-Dev-Router-Route`, `X-Dev-Router-Subscriber`, `X-Dev-Router-Request-Id`, `X-Dev-Router-Token` (per-connection hop credential, not the management secret), and `X-Forwarded-*` when a client IP exists. `Authorization`, `Cookie`, and `Set-Cookie` are not forwarded. Reverse-tunnel `Host` is taken from `localUrl`; `X-Forwarded-Host` keeps the public host. The Worker does not send `X-Dev-Router-Secret`. Each delivery has a 10s timeout and does not follow redirects.
 
 ## Deploy the shared Worker
 
@@ -211,7 +211,7 @@ npx wrangler secret put DEV_ROUTER_DASHBOARD_PASSWORD
 
 Bind a hostname such as `dev-webhooks.example.com` in the Cloudflare dashboard. Point every client at that origin with `DEV_ROUTER_URL`. Mint a root-scoped credential with `npx dev-router token`, or a named-route credential with `npx dev-router token --route <routeId>`, using the operator secret; give orbs only that token. Clients need outbound HTTPS and WSS to that host.
 
-`GET /dashboard` and `GET /dashboard.json` are password-gated status surfaces (HTTP Basic, password `DEV_ROUTER_DASHBOARD_PASSWORD`; username can be blank). They list active routes, subscriber counts, transport, and environment id. They do not return `DEV_ROUTER_SECRET`, route credentials, connection tokens, or forward tokens. Management bearer auth applies only to `/_router/*`.
+`GET /dashboard` is a password form; `POST /dashboard/login` with `DEV_ROUTER_DASHBOARD_PASSWORD` sets an HttpOnly `SameSite=Strict` cookie (`Path=/dashboard`) so it is not sent on webhook or OAuth URLs. JSON is `GET /dashboard/status` (`/dashboard.json` redirects there). They list active routes, subscriber counts, transport, and environment id. They do not return `DEV_ROUTER_SECRET`, route credentials, connection tokens, or forward tokens. Management bearer auth applies only to `/_router/*`.
 
 ## Agent Skills (TanStack Intent)
 
