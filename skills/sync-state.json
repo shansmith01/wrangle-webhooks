@@ -1,32 +1,37 @@
 {
-  "library_version": "0.3.2",
+  "library_version": "0.3.4",
   "skills": {
     "connect": {
       "sources_sha": {
-        "shansmith01/wrangle-webhooks:skills/connect/connect.md": "e086b02d1a3b4d025d8562088331c97a3fa231342ec5262fb7f12a566e250b54",
-        "shansmith01/wrangle-webhooks:src/cli.ts": "abd003948655961a00363eef57d871ca05310a6e4ae263117ce587e6f2653267",
-        "shansmith01/wrangle-webhooks:src/client.ts": "cecb98d216b3f6947853bda54b4390a09d0399869f89b0fb0bcbfd35dbdb9b1a",
-        "shansmith01/wrangle-webhooks:src/tunnel-client.ts": "1ad188d9db2b66caf5cdb0dcd9dbd4d0df0a7f44334fe5df1c235ac36f470f95",
+        "shansmith01/wrangle-webhooks:skills/connect/connect.md": "87171118e994cbfa7302afccf5e539b69d22eee5f963ac41dded384d867773c3",
+        "shansmith01/wrangle-webhooks:src/cli.ts": "a302c2eb73790c353cdac80ae64c3b32a8d98096ad43b4a530a530e2a5e30f49",
+        "shansmith01/wrangle-webhooks:src/client.ts": "0da923231535c79306ade686dc4eb51038f9171c0e1f8ed3464dffaee96df6dd",
+        "shansmith01/wrangle-webhooks:src/tunnel-client.ts": "e494b4443b2a3d2cd6640becf16d2e84b9c456b69110ff91b4beb8e2e51f834f",
+        "shansmith01/wrangle-webhooks:src/control-server.ts": "9946915f516a30f6f0161302a224249aa77c3799aa6c7d63c10ac242ee56afa1",
+        "shansmith01/wrangle-webhooks:src/connection-state.ts": "67b0c6c5702910495d7587403b55dbbbf7e7556546c1e28ed832e53ca4a0b257",
+        "shansmith01/wrangle-webhooks:src/credentials.ts": "6cd9fc4b19608d9f936d132a9cacad87ad96b6fbd001221ffd2a415d120e8d87",
         "shansmith01/wrangle-webhooks:src/detect-url.ts": "98a738a208eaa94686f6f8ad3d446cfafc9c64b78931cbd241781e64d5ef4919",
-        "shansmith01/wrangle-webhooks:src/shared.ts": "20d4e31ddb7d1de0e81df9463b10cb33a36eee596a6001313941002bd44e17dc"
+        "shansmith01/wrangle-webhooks:src/shared.ts": "4d7d5d2b350077adf663101bd5d459972ccc74f685de24fdfde73a39500ecb6f"
       }
     },
     "deploy": {
       "sources_sha": {
-        "shansmith01/wrangle-webhooks:skills/deploy/deploy.md": "10f94387d5b49e0c28f2fa0794687db3e2111bb1ce8878389684c0e2f01c5950",
+        "shansmith01/wrangle-webhooks:skills/deploy/deploy.md": "c10c14ad3b065bbac9ed9a74d5a7fe8613f3e48dd8a3709d4072532c9d785d2f",
         "shansmith01/wrangle-webhooks:wrangler.jsonc": "ebf814ab7f68ed187e3caa136cb9d5e3d2b318d87bb65f9bdb66993b9a046b1d",
-        "shansmith01/wrangle-webhooks:src/worker.ts": "c48356e09f10c10b5f335ddce45e9fb8ae77a53a1a5100a3a2deaf6c7dcea4bd",
-        "shansmith01/wrangle-webhooks:src/auth.ts": "3b7991048e2dcb58b5f6f7e6dfb2bed4fa408c9065a7bcc97c68599e3f90daaa"
+        "shansmith01/wrangle-webhooks:src/worker.ts": "060cf273a9894a3c2f55611aa3e49fc69f7ab20852d765de4a56d7ba14337622",
+        "shansmith01/wrangle-webhooks:src/dashboard.ts": "3e6556d1532e0b23d07a1ee934ae442c901f097c7cf82701c7b0473c0c5e82b0",
+        "shansmith01/wrangle-webhooks:src/auth.ts": "8e2794913f476906fd8e609dea6dd338d3a6f50ce1af78d3e4bc34591b124f06",
+        "shansmith01/wrangle-webhooks:src/credentials.ts": "6cd9fc4b19608d9f936d132a9cacad87ad96b6fbd001221ffd2a415d120e8d87"
       }
     },
     "forwarding": {
       "sources_sha": {
-        "shansmith01/wrangle-webhooks:skills/forwarding/forwarding.md": "8ac904246068945c8cd20b5972a1bf9790e39851ec9e9fc235c316522ba9816d",
-        "shansmith01/wrangle-webhooks:src/worker.ts": "c48356e09f10c10b5f335ddce45e9fb8ae77a53a1a5100a3a2deaf6c7dcea4bd",
+        "shansmith01/wrangle-webhooks:skills/forwarding/forwarding.md": "97d0bca29852346ba42e4d2ab4c3c9c029e30a4c35a8155152828cdb541a2ae4",
+        "shansmith01/wrangle-webhooks:src/worker.ts": "060cf273a9894a3c2f55611aa3e49fc69f7ab20852d765de4a56d7ba14337622",
         "shansmith01/wrangle-webhooks:src/forward.ts": "695e2427d63635386b4d71f81eee65923d8b30373c12013ddcf4b1085e62b38f",
-        "shansmith01/wrangle-webhooks:src/durable-object.ts": "79026a60288d3e0971c26686a6010e1ed911a689a932756184610cd1f5f0d6ce",
-        "shansmith01/wrangle-webhooks:src/oauth-state.ts": "df4bbb185179371ab37eae2a4e749d25e1c728fc07f1856375923303d699ad7a",
-        "shansmith01/wrangle-webhooks:src/shared.ts": "20d4e31ddb7d1de0e81df9463b10cb33a36eee596a6001313941002bd44e17dc"
+        "shansmith01/wrangle-webhooks:src/durable-object.ts": "08982892088f15e21065dc409f2ae2a31722ebbd526bee52f4fdff2fc84cfe54",
+        "shansmith01/wrangle-webhooks:src/oauth-state.ts": "aa8c848cf800aa7a804a8232d8b710990c9a463caa6fc3fba0f88584ae87b0c2",
+        "shansmith01/wrangle-webhooks:src/shared.ts": "4d7d5d2b350077adf663101bd5d459972ccc74f685de24fdfde73a39500ecb6f"
       }
     }
   }

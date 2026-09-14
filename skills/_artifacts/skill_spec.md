@@ -4,7 +4,7 @@ Shared Cloudflare ingress for ephemeral cloud development environments. One Work
 
 ## Coverage and batch history
 
-- **2026-09-15 / 0.3.4** — Live `--environment-id` reclaim requires the sidecar connection token; parked reconnects still work after the socket closes.
+- **2026-09-15 / 0.3.4** — Live `--environment-id` reclaim requires the sidecar connection token; parked reconnects still work after the socket closes. Dashboard HTML fetches `/dashboard/status` and is served with CSP `default-src 'none'` (no inlined subscriber JSON).
 - **2026-09-15 / 0.3.3** — Control server listens before the tunnel is up; `GET /ready` 503 includes a safe `reason`. Connect skill documents local Portless development (supervisor `.env`, environment id, 401 vs closed 8790).
 - **2026-09-15 / 0.3.2** — Reverse-tunnel `fetch()` derives `Host` from `localUrl` so virtual-host proxies such as Portless can route; `X-Forwarded-Host` keeps the public host.
 - **2026-09-14 / 0.3.1** — Slim published deps (`ws` only), live WebSocket `/ready`, Amp services.yaml example, root vs named credentials, forwarding display URL.
@@ -24,13 +24,13 @@ Shared Cloudflare ingress for ephemeral cloud development environments. One Work
 
 | Skill | Type | Domain | What it covers | Failure modes |
 | --- | --- | --- | --- | --- |
-| connect | core | client-connection | CLI, DevRouterClient, reverse tunnel, control server, Portless local dev, replica-mode OAuth prompt | 10 |
-| deploy | lifecycle | worker-operations | wrangler deploy, secrets, types, dashboard, WSS | 3 |
+| connect | core | client-connection | CLI, DevRouterClient, reverse tunnel, control server, Portless local dev, replica-mode OAuth prompt | 11 |
+| deploy | lifecycle | worker-operations | wrangler deploy, secrets, types, dashboard cookie + CSP, WSS | 3 |
 | forwarding | core | ingress-contract | webhook 202, OAuth proxy, replica credentials, headers, fan-out vs correlation | 6 |
 
 ## Failure Mode Inventory
 
-### connect (10 failure modes)
+### connect (11 failure modes)
 
 | # | Mistake | Priority | Source | Cross-skill? |
 | --- | --- | --- | --- | --- |
@@ -42,8 +42,9 @@ Shared Cloudflare ingress for ephemeral cloud development environments. One Work
 | 6 | Give every orb the operator secret | HIGH | src/credentials.ts | deploy |
 | 7 | Treat /ready as connected from a parked subscriber id | HIGH | src/control-server.ts | — |
 | 8 | Use a PID as `--environment-id` | HIGH | src/shared.ts | — |
-| 9 | `source .env` / `test -f` in the supervisor | HIGH | skills/connect/connect.md | — |
-| 10 | Declare Portless success from a public 202 | HIGH | skills/forwarding/forwarding.md | forwarding |
+| 9 | Reuse another replica’s live `--environment-id` | HIGH | src/durable-object.ts | — |
+| 10 | `source .env` / `test -f` in the supervisor | HIGH | skills/connect/connect.md | — |
+| 11 | Declare Portless success from a public 202 | HIGH | skills/forwarding/forwarding.md | forwarding |
 
 ### deploy (3 failure modes)
 
@@ -81,7 +82,7 @@ Shared Cloudflare ingress for ephemeral cloud development environments. One Work
 
 ## Remaining Gaps
 
-None for 0.3.4 live environment-id proof, 0.3.3 immediate control-server bind, `/ready` connection-state reason, Portless local-dev supervisor rules, or 0.3.2 reverse-tunnel Host-from-localUrl.
+None for 0.3.4 live environment-id proof, dashboard cookie + CSP (no inlined subscriber JSON), 0.3.3 immediate control-server bind, `/ready` connection-state reason, Portless local-dev supervisor rules, or 0.3.2 reverse-tunnel Host-from-localUrl.
 
 ## Recommended Skill File Structure
 

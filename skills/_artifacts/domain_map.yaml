@@ -1,12 +1,12 @@
 # domain_map.yaml
 # Library: @powerboard/dev-router
-# Version: 0.1.0
-# Date: 2026-09-14
+# Version: 0.3.4
+# Date: 2026-09-15
 # Status: reviewed
 
 library:
   name: '@powerboard/dev-router'
-  version: '0.1.0'
+  version: '0.3.4'
   repository: 'https://github.com/shansmith01/wrangle-webhooks'
   description: 'Shared Cloudflare ingress router client for cloud development environments'
   primary_framework: 'framework-agnostic'
@@ -14,7 +14,7 @@ library:
 domains:
   - name: Client connection
     slug: client-connection
-    description: Registering a remote cloud environment so public HTTP reaches its https origin
+    description: Registering a cloud environment as a reverse-tunnel or public-target subscriber
   - name: Shared Worker operations
     slug: worker-operations
     description: Deploying and operating the single shared ingress Worker
@@ -111,15 +111,15 @@ skills:
         version_context: '0.1.0'
         skills: ['deploy']
       - mistake: Gate /dashboard with the management bearer token
-        mechanism: /dashboard uses HTTP Basic with DEV_ROUTER_DASHBOARD_PASSWORD; /_router/* uses the management bearer.
+        mechanism: /dashboard uses a Path=/dashboard session cookie after posting DEV_ROUTER_DASHBOARD_PASSWORD to /dashboard/login; /_router/* uses the management bearer.
         wrong_pattern: |
           fetch("/dashboard", { headers: { Authorization: "Bearer ..." } })
         correct_pattern: |
-          fetch("/dashboard", { headers: { Authorization: "Basic ..." } })
+          POST /dashboard/login then GET /dashboard with the session cookie
         source: src/worker.ts
         priority: HIGH
         status: active
-        version_context: '0.1.0'
+        version_context: '0.3.4'
         skills: ['deploy']
   - name: forwarding
     slug: forwarding

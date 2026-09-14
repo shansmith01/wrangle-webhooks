@@ -16,6 +16,7 @@ sources:
   - shansmith01/wrangle-webhooks:skills/deploy/deploy.md
   - shansmith01/wrangle-webhooks:wrangler.jsonc
   - shansmith01/wrangle-webhooks:src/worker.ts
+  - shansmith01/wrangle-webhooks:src/dashboard.ts
   - shansmith01/wrangle-webhooks:src/auth.ts
   - shansmith01/wrangle-webhooks:src/credentials.ts
 ---
@@ -55,7 +56,7 @@ Keep secrets in `.dev.vars` locally. Do not commit them.
 
 ### Dashboard
 
-`GET /dashboard` is a password form that sets an HttpOnly `SameSite=Strict` cookie with `Path=/dashboard`. JSON is `GET /dashboard/status` (`/dashboard.json` redirects there so the cookie is sent). They list active routes, subscriber counts, transport, and environment id. They do not return `DEV_ROUTER_SECRET`, route credentials, connection tokens, or per-connection forward tokens.
+`GET /dashboard` is a password form that sets an HttpOnly `SameSite=Strict` cookie with `Path=/dashboard`. JSON is `GET /dashboard/status` (`/dashboard.json` redirects there so the cookie is sent). HTML does not inline subscriber JSON; the page fetches `/dashboard/status` and is served with CSP `default-src 'none'` (inline style/script, `connect-src 'self'`). They list active routes, subscriber counts, transport, and environment id. They do not return `DEV_ROUTER_SECRET`, route credentials, connection tokens, or per-connection forward tokens.
 
 ## Common Mistakes
 

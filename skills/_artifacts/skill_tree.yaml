@@ -1,6 +1,6 @@
 library:
   name: '@powerboard/dev-router'
-  version: '0.1.0'
+  version: '0.3.4'
 generated_from:
   domain_map: skills/_artifacts/domain_map.yaml
   skill_spec: skills/_artifacts/skill_spec.md
@@ -14,18 +14,26 @@ skills:
     domain: client-connection
     path: skills/connect/SKILL.md
     description: >
-      Use when connecting a remote cloud development environment to
-      @powerboard/dev-router via `npx dev-router connect`, DevRouterClient,
-      DEV_ROUTER_URL, DEV_ROUTER_SECRET, DEV_ROUTER_ROUTE, --route, --target,
-      PUBLIC_DEV_URL, Cursor Cloud Agents, Codespaces, Gitpod, Replit, VS Code
-      tunnels, or cloudflared. Covers sidecar install, public HTTPS target rules,
-      and why localhost port-forward is not a Worker target. Load forwarding for
-      the public request contract; load deploy to provision the shared Worker.
+      Use when connecting a remote cloud development environment or a local
+      Portless session to @powerboard/dev-router via `npx dev-router connect`,
+      DevRouterClient, DEV_ROUTER_URL, DEV_ROUTER_SECRET, DEV_ROUTER_ROUTE, --route,
+      --local-url, DEV_ROUTER_LOCAL_URL, --target, PUBLIC_DEV_URL, --environment-id,
+      DEV_ROUTER_ENVIRONMENT_ID, control server /ready /oauth-states, Amp orbs,
+      Cursor Cloud Agents, Codespaces, Gitpod, Replit, CI workers, containers, or
+      local development with Portless. Covers reverse-tunnel sidecar install,
+      supervisor .env loading, stable environment ids, optional public HTTPS
+      targets, replica mode OAuth, and binding app-generated OAuth state through
+      the loopback control server. Load forwarding for the public request contract;
+      load deploy to provision the shared Worker.
     purpose: Guidance for registering a cloud environment as a router subscriber using the CLI or DevRouterClient.
     sources:
       - shansmith01/wrangle-webhooks:skills/connect/connect.md
       - shansmith01/wrangle-webhooks:src/cli.ts
       - shansmith01/wrangle-webhooks:src/client.ts
+      - shansmith01/wrangle-webhooks:src/tunnel-client.ts
+      - shansmith01/wrangle-webhooks:src/control-server.ts
+      - shansmith01/wrangle-webhooks:src/connection-state.ts
+      - shansmith01/wrangle-webhooks:src/credentials.ts
       - shansmith01/wrangle-webhooks:src/detect-url.ts
       - shansmith01/wrangle-webhooks:src/shared.ts
   - name: deploy
@@ -36,29 +44,33 @@ skills:
       Use when deploying or configuring the shared @powerboard/dev-router Cloudflare
       Worker from this repository: wrangler deploy, wrangler types,
       DEV_ROUTER_SECRET, DEV_ROUTER_DASHBOARD_PASSWORD, .dev.vars, durable object bindings ROUTE and ROUTER_INDEX,
-      /dashboard, custom hostnames, or local wrangler dev. The npm package is the
-      client only. Do not load this for client connect or request-forwarding
-      behavior.
+      reverse-tunnel WebSockets, /dashboard, custom hostnames, or local wrangler
+      dev. The npm package is the client only. Do not load this for client connect
+      or request-forwarding behavior.
     purpose: Guidance for deploying and operating the shared ingress Worker.
     sources:
       - shansmith01/wrangle-webhooks:skills/deploy/deploy.md
       - shansmith01/wrangle-webhooks:wrangler.jsonc
       - shansmith01/wrangle-webhooks:src/worker.ts
+      - shansmith01/wrangle-webhooks:src/dashboard.ts
       - shansmith01/wrangle-webhooks:src/auth.ts
+      - shansmith01/wrangle-webhooks:src/credentials.ts
   - name: forwarding
     slug: forwarding
     domain: ingress-contract
     path: skills/forwarding/SKILL.md
     description: >
       Use when implementing the app that receives @powerboard/dev-router traffic, or
-      when explaining public URLs, routeId prefixes, 202 Accepted, header
-      stripping, X-Dev-Router-* headers, fan-out, 10s delivery timeout,
-      route_not_found, or why the subscriber origin must be public https reachable
-      from Cloudflare. Do not load this to install the sidecar or deploy the
-      Worker.
+      when explaining public URLs, routeId prefixes, webhook 202 fan-out, OAuth
+      subscriber responses, replica mode (OAuth each new environment before
+      webhook follow-up), state correlation, header stripping, X-Dev-Router-Token,
+      reverse tunnels, 10s delivery timeout, or route_not_found. Do not load this
+      to install the sidecar or deploy the Worker.
     purpose: Guidance for the public ingress path and what subscribers actually receive.
     sources:
       - shansmith01/wrangle-webhooks:skills/forwarding/forwarding.md
       - shansmith01/wrangle-webhooks:src/worker.ts
       - shansmith01/wrangle-webhooks:src/forward.ts
+      - shansmith01/wrangle-webhooks:src/durable-object.ts
+      - shansmith01/wrangle-webhooks:src/oauth-state.ts
       - shansmith01/wrangle-webhooks:src/shared.ts
