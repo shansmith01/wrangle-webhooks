@@ -57,7 +57,7 @@ Forwarded requests include:
 
 The Worker does **not** send `X-Dev-Router-Secret`. Do not compare a hop header to the management bearer token.
 
-Hop-by-hop headers (`connection`, `keep-alive`, `host`, `content-length`, and similar) are not forwarded.
+Hop-by-hop headers (`connection`, `keep-alive`, `host`, `content-length`, and similar) are not forwarded. Reverse-tunnel delivery also drops `Host` so the sidecar `fetch()` sets it from `localUrl` (for example `http://nomads-app-api.localhost:1355`); `X-Forwarded-Host` still carries the public host.
 
 `_router` and `dashboard` are reserved path prefixes and are not valid `routeId` values.
 

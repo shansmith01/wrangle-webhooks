@@ -11,7 +11,7 @@ metadata:
   purpose: Guidance for the public ingress path and what subscribers actually receive.
   type: core
   library: "@powerboard/dev-router"
-  library_version: "0.3.1"
+  library_version: "0.3.2"
 sources:
   - shansmith01/wrangle-webhooks:skills/forwarding/forwarding.md
   - shansmith01/wrangle-webhooks:src/worker.ts
@@ -55,7 +55,7 @@ OAuth callbacks (`state` plus `code`/`error`, or `/oauth/callback` / `/auth/call
 
 ### Preserve method, body, query, and forwardable headers
 
-Hop-by-hop headers are dropped. The Worker adds `X-Dev-Router-Route`, `X-Dev-Router-Subscriber`, `X-Dev-Router-Request-Id`, `X-Dev-Router-Token` (per-connection credential), and `X-Forwarded-*` when a client IP exists. It does not send `X-Dev-Router-Secret`.
+Hop-by-hop headers are dropped. Reverse-tunnel `fetch()` derives `Host` from `localUrl`; `X-Forwarded-Host` keeps the public host so virtual-host proxies such as Portless can route. The Worker adds `X-Dev-Router-Route`, `X-Dev-Router-Subscriber`, `X-Dev-Router-Request-Id`, `X-Dev-Router-Token` (per-connection credential), and `X-Forwarded-*` when a client IP exists. It does not send `X-Dev-Router-Secret`.
 
 ### Timeouts and isolation
 

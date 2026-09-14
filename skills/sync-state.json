@@ -1,12 +1,12 @@
 {
-  "library_version": "0.3.1",
+  "library_version": "0.3.2",
   "skills": {
     "connect": {
       "sources_sha": {
         "shansmith01/wrangle-webhooks:skills/connect/connect.md": "e086b02d1a3b4d025d8562088331c97a3fa231342ec5262fb7f12a566e250b54",
         "shansmith01/wrangle-webhooks:src/cli.ts": "abd003948655961a00363eef57d871ca05310a6e4ae263117ce587e6f2653267",
         "shansmith01/wrangle-webhooks:src/client.ts": "cecb98d216b3f6947853bda54b4390a09d0399869f89b0fb0bcbfd35dbdb9b1a",
-        "shansmith01/wrangle-webhooks:src/tunnel-client.ts": "316f5335a0444026ddc72d05f72c182bfbc990bd816131db55fdc75531a0972d",
+        "shansmith01/wrangle-webhooks:src/tunnel-client.ts": "1ad188d9db2b66caf5cdb0dcd9dbd4d0df0a7f44334fe5df1c235ac36f470f95",
         "shansmith01/wrangle-webhooks:src/detect-url.ts": "98a738a208eaa94686f6f8ad3d446cfafc9c64b78931cbd241781e64d5ef4919",
         "shansmith01/wrangle-webhooks:src/shared.ts": "20d4e31ddb7d1de0e81df9463b10cb33a36eee596a6001313941002bd44e17dc"
       }
@@ -21,7 +21,7 @@
     },
     "forwarding": {
       "sources_sha": {
-        "shansmith01/wrangle-webhooks:skills/forwarding/forwarding.md": "c90da46323ab54750597119376bcde4ede3de47d977113c168318ac1d64e0bf5",
+        "shansmith01/wrangle-webhooks:skills/forwarding/forwarding.md": "8ac904246068945c8cd20b5972a1bf9790e39851ec9e9fc235c316522ba9816d",
         "shansmith01/wrangle-webhooks:src/worker.ts": "c48356e09f10c10b5f335ddce45e9fb8ae77a53a1a5100a3a2deaf6c7dcea4bd",
         "shansmith01/wrangle-webhooks:src/forward.ts": "695e2427d63635386b4d71f81eee65923d8b30373c12013ddcf4b1085e62b38f",
         "shansmith01/wrangle-webhooks:src/durable-object.ts": "79026a60288d3e0971c26686a6010e1ed911a689a932756184610cd1f5f0d6ce",

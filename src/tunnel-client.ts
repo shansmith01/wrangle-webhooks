@@ -320,6 +320,7 @@ export class TunnelConnection implements Connection {
   }> {
     const url = joinTargetUrl(this.targetBaseUrl, message.path, message.search);
     const headers = headersFromPairs(message.headers);
+    headers.delete("host");
     const init: RequestInit = {
       method: message.method,
       headers,

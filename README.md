@@ -192,7 +192,7 @@ Task documentation and Agent Skills:
 
 No subscribers → `404` `{ "error": "route_not_found" }`.
 
-Forwarded requests keep method, body, query string, and non-hop-by-hop headers, plus `X-Dev-Router-Route`, `X-Dev-Router-Subscriber`, `X-Dev-Router-Request-Id`, `X-Dev-Router-Token` (per-connection hop credential, not the management secret), and `X-Forwarded-*` when a client IP exists. The Worker does not send `X-Dev-Router-Secret`. Each delivery has a 10s timeout and does not follow redirects.
+Forwarded requests keep method, body, query string, and non-hop-by-hop headers, plus `X-Dev-Router-Route`, `X-Dev-Router-Subscriber`, `X-Dev-Router-Request-Id`, `X-Dev-Router-Token` (per-connection hop credential, not the management secret), and `X-Forwarded-*` when a client IP exists. Reverse-tunnel `Host` is taken from `localUrl`; `X-Forwarded-Host` keeps the public host. The Worker does not send `X-Dev-Router-Secret`. Each delivery has a 10s timeout and does not follow redirects.
 
 ## Deploy the shared Worker
 
