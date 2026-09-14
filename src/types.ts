@@ -7,6 +7,7 @@ export interface Subscriber {
   createdAt: number;
   lastHeartbeatAt: number;
   expiresAt: number;
+  environmentId: string | null;
 }
 
 export interface RegisterSubscriberResponse {

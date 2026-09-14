@@ -163,11 +163,12 @@ cp .dev.vars.example .dev.vars
 npx wrangler types
 npx wrangler deploy
 npx wrangler secret put DEV_ROUTER_SECRET
+npx wrangler secret put DEV_ROUTER_DASHBOARD_PASSWORD
 ```
 
 Bind a hostname such as `dev-webhooks.example.com` in the Cloudflare dashboard. Point every client at that origin with `DEV_ROUTER_URL`. Mint route credentials with `npx dev-router token --route <routeId>` using the operator secret; give orbs only that route token. Clients need outbound HTTPS and WSS to that host.
 
-`GET /dashboard` and `GET /dashboard.json` are **public** status surfaces. They list active routes, subscriber counts, and transport. They do not return `DEV_ROUTER_SECRET`, route credentials, connection tokens, or forward tokens. Bearer auth applies only to `/_router/*`.
+`GET /dashboard` and `GET /dashboard.json` are password-gated status surfaces (HTTP Basic, password `DEV_ROUTER_DASHBOARD_PASSWORD`; username can be blank). They list active routes, subscriber counts, transport, and environment id. They do not return `DEV_ROUTER_SECRET`, route credentials, connection tokens, or forward tokens. Management bearer auth applies only to `/_router/*`.
 
 ## Agent Skills (TanStack Intent)
 

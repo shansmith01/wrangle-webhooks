@@ -35,7 +35,7 @@ skills:
     description: >
       Use when deploying or configuring the shared @powerboard/dev-router Cloudflare
       Worker from this repository: wrangler deploy, wrangler types,
-      DEV_ROUTER_SECRET, .dev.vars, durable object bindings ROUTE and ROUTER_INDEX,
+      DEV_ROUTER_SECRET, DEV_ROUTER_DASHBOARD_PASSWORD, .dev.vars, durable object bindings ROUTE and ROUTER_INDEX,
       /dashboard, custom hostnames, or local wrangler dev. The npm package is the
       client only. Do not load this for client connect or request-forwarding
       behavior.

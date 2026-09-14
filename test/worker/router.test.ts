@@ -27,6 +27,15 @@ function authHeaders(extra?: HeadersInit): Headers {
   return headers;
 }
 
+function dashboardHeaders(extra?: HeadersInit): Headers {
+  const headers = new Headers(extra);
+  headers.set(
+    "Authorization",
+    `Basic ${btoa(`:${env.DEV_ROUTER_DASHBOARD_PASSWORD}`)}`
+  );
+  return headers;
+}
+
 async function fetchWorker(
   input: string,
   init?: RequestInit
@@ -104,18 +113,44 @@ describe("management API", () => {
 });
 
 describe("dashboard", () => {
-  it("serves HTML without authentication", async () => {
-    const response = await fetchWorker("https://dev-webhooks.example.com/dashboard");
+  it("rejects unauthenticated HTML and JSON", async () => {
+    const html = await fetchWorker("https://dev-webhooks.example.com/dashboard");
+    expect(html.status).toBe(401);
+    expect(html.headers.get("www-authenticate")).toMatch(/Basic/i);
+
+    const json = await fetchWorker("https://dev-webhooks.example.com/dashboard.json");
+    expect(json.status).toBe(401);
+    expect(await json.json()).toEqual({ error: "unauthorized" });
+  });
+
+  it("does not accept the management bearer token", async () => {
+    const response = await fetchWorker("https://dev-webhooks.example.com/dashboard", {
+      headers: authHeaders()
+    });
+    expect(response.status).toBe(401);
+  });
+
+  it("serves HTML with the dashboard password", async () => {
+    const response = await fetchWorker("https://dev-webhooks.example.com/dashboard", {
+      headers: dashboardHeaders()
+    });
     expect(response.status).toBe(200);
     expect(response.headers.get("content-type")).toMatch(/text\/html/);
     const html = await response.text();
     expect(html).toContain("Dev router");
     expect(html).toContain("No active connections.");
+    expect(html).toContain("Environment id");
   });
 
-  it("lists active subscribers as JSON", async () => {
-    const created = await register("dash-route", "https://dev-dash.example");
-    const response = await fetchWorker("https://dev-webhooks.example.com/dashboard.json");
+  it("lists active subscribers as JSON including environment id", async () => {
+    const created = await register(
+      "dash-route",
+      "https://dev-dash.example",
+      "amp-thread-dashboard"
+    );
+    const response = await fetchWorker("https://dev-webhooks.example.com/dashboard.json", {
+      headers: dashboardHeaders()
+    });
     expect(response.status).toBe(200);
     const body = (await response.json()) as {
       ok: boolean;
@@ -124,7 +159,12 @@ describe("dashboard", () => {
       subscriberCount: number;
       routes: Array<{
         routeId: string;
-        subscribers: Array<{ id: string; targetBaseUrl: string; transport: string }>;
+        subscribers: Array<{
+          id: string;
+          targetBaseUrl: string;
+          transport: string;
+          environmentId: string | null;
+        }>;
       }>;
     };
     expect(body.ok).toBe(true);
@@ -135,11 +175,14 @@ describe("dashboard", () => {
     expect(route?.subscribers[0]?.id).toBe(created.subscriberId);
     expect(route?.subscribers[0]?.transport).toBe("public");
     expect(route?.subscribers[0]?.targetBaseUrl).toBe("https://dev-dash.example/");
+    expect(route?.subscribers[0]?.environmentId).toBe("amp-thread-dashboard");
   });
 
   it("does not forward /dashboard to default subscribers", async () => {
     await register("", "https://dev-root.example");
-    const response = await fetchWorker("https://dev-webhooks.example.com/dashboard");
+    const response = await fetchWorker("https://dev-webhooks.example.com/dashboard", {
+      headers: dashboardHeaders()
+    });
     expect(response.status).toBe(200);
     expect(response.headers.get("content-type")).toMatch(/text\/html/);
   });

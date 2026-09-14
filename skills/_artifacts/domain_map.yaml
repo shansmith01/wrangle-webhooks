@@ -110,12 +110,12 @@ skills:
         status: active
         version_context: '0.1.0'
         skills: ['deploy']
-      - mistake: Treat /dashboard as bearer-gated
-        mechanism: Only /_router/* checks Authorization; /dashboard is public status.
+      - mistake: Gate /dashboard with the management bearer token
+        mechanism: /dashboard uses HTTP Basic with DEV_ROUTER_DASHBOARD_PASSWORD; /_router/* uses the management bearer.
         wrong_pattern: |
           fetch("/dashboard", { headers: { Authorization: "Bearer ..." } })
         correct_pattern: |
-          fetch("/dashboard")
+          fetch("/dashboard", { headers: { Authorization: "Basic ..." } })
         source: src/worker.ts
         priority: HIGH
         status: active

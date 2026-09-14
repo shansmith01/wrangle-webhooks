@@ -442,7 +442,8 @@ export class RouteDurableObject extends DurableObject<Env> {
         targetBaseUrl: subscriber.targetBaseUrl,
         createdAt: 0,
         lastHeartbeatAt: 0,
-        expiresAt: 0
+        expiresAt: 0,
+        environmentId: null
       },
       remainingPath: payload.remainingPath,
       search: payload.search,
@@ -867,7 +868,8 @@ function toSubscriber(row: SubscriberRow): Subscriber {
     targetBaseUrl: transport === "tunnel" ? "reverse-tunnel" : row.target_base_url,
     createdAt: row.created_at,
     lastHeartbeatAt: row.last_heartbeat_at,
-    expiresAt: row.expires_at
+    expiresAt: row.expires_at,
+    environmentId: row.environment_id
   };
 }
 

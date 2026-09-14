@@ -1,1 +1,2 @@
 DEV_ROUTER_SECRET=replace-me-with-a-long-random-secret
+DEV_ROUTER_DASHBOARD_PASSWORD=replace-me-with-a-dashboard-password

@@ -1,4 +1,10 @@
-import { readManagementSecret, requireManagementAuth, unauthorized } from "./auth";
+import {
+  readManagementSecret,
+  requireDashboardAuth,
+  requireManagementAuth,
+  unauthorized,
+  unauthorizedDashboard
+} from "./auth";
 import { deriveRouteSecret, matchJoinCredential } from "./credentials";
 import { dashboardHtml, dashboardStatus, type DashboardRoute } from "./dashboard";
 import { RouteDurableObject } from "./durable-object";
@@ -391,6 +397,14 @@ async function handleDashboard(
 ): Promise<Response> {
   if (request.method !== "GET" && request.method !== "HEAD") {
     return Response.json({ error: "method_not_allowed" }, { status: 405 });
+  }
+
+  const password = env.DEV_ROUTER_DASHBOARD_PASSWORD;
+  if (!password) {
+    return Response.json({ error: "dashboard_password_not_configured" }, { status: 503 });
+  }
+  if (!requireDashboardAuth(request, password)) {
+    return unauthorizedDashboard(pathname === "/dashboard.json");
   }
 
   const routes = await loadDashboardRoutes(env);

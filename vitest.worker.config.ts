@@ -8,7 +8,8 @@ export default defineWorkersConfig({
         wrangler: { configPath: "./wrangler.jsonc" },
         miniflare: {
           bindings: {
-            DEV_ROUTER_SECRET: "test-secret"
+            DEV_ROUTER_SECRET: "test-secret",
+            DEV_ROUTER_DASHBOARD_PASSWORD: "test-dashboard-password"
           }
         }
       }

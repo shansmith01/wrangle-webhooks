@@ -43,7 +43,7 @@ Shared Cloudflare ingress for ephemeral cloud development environments. One Work
 | --- | --- | --- | --- | --- |
 | 1 | Hardcode the management secret | CRITICAL | skills/deploy/deploy.md | — |
 | 2 | Hand-write Env after binding changes | HIGH | wrangler.jsonc | — |
-| 3 | Treat /dashboard as bearer-gated | HIGH | src/worker.ts | — |
+| 3 | Gate /dashboard with the management bearer token | HIGH | src/worker.ts | — |
 
 ### forwarding (6 failure modes)
 
