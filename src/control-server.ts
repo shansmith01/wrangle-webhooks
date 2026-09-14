@@ -92,6 +92,7 @@ async function handleControlRequest(
         ok: true,
         ready,
         connected: ready,
+        reason: connection.connectionState,
         subscriberId: connection.subscriberId,
         routeId: connection.routeId,
         publicUrl: connection.publicUrl,

@@ -1,3 +1,7 @@
+import type { ConnectionStateReason } from "./connection-state";
+
+export type { ConnectionStateReason } from "./connection-state";
+
 export type SubscriberTransport = "public" | "tunnel";
 
 export interface Subscriber {
@@ -41,6 +45,8 @@ export interface Connection {
   connectionToken: string;
   environmentId?: string;
   readonly connected: boolean;
+  readonly connectionState: ConnectionStateReason;
+  whenReady(): Promise<void>;
   disconnect(): Promise<void>;
   wrapOAuthState(inner?: string): Promise<string>;
   bindOAuthState(state: string): Promise<void>;

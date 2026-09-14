@@ -16,6 +16,7 @@
     "src/cli-command.ts",
     "src/types.ts",
     "src/shared.ts",
+    "src/connection-state.ts",
     "src/detect-url.ts",
     "src/oauth-state.ts",
     "src/tunnel-protocol.ts",

@@ -1,4 +1,8 @@
 import { detectPublicDevUrl } from "./detect-url";
+import {
+  nextConnectionFailure,
+  type ConnectionStateReason
+} from "./connection-state";
 import { authorizedFetch } from "./management-fetch";
 import { wrapOAuthState } from "./oauth-state";
 import {
@@ -23,6 +27,7 @@ import type {
 
 export { startControlServer, CONTROL_DEFAULT_PORT } from "./control-server";
 export type { ControlServer, ControlServerOptions } from "./control-server";
+export type { ConnectionStateReason } from "./connection-state";
 export { deriveRouteSecret } from "./credentials";
 export { detectPublicDevUrl, resolveDevPort } from "./detect-url";
 export type { DetectedPublicUrl } from "./detect-url";
@@ -47,32 +52,40 @@ export class DevRouterClient {
   }
 
   async connect(options: ConnectOptions = {}): Promise<Connection> {
+    const connection = this.open(options);
+    await connection.whenReady();
+    return connection;
+  }
+
+  open(options: ConnectOptions = {}): Connection {
+    const connection = this.createConnection(options);
+    connection.begin();
+    return connection;
+  }
+
+  private createConnection(options: ConnectOptions): TunnelConnection | PublicConnection {
     const routeId = resolveRouteId(options);
     if (options.localUrl && options.targetBaseUrl) {
       throw new Error("localUrl and targetBaseUrl are mutually exclusive");
     }
     if (options.localUrl) {
-      const connection = new TunnelConnection({
+      return new TunnelConnection({
         routerUrl: this.routerUrl,
         secret: this.secret,
         routeId,
         localUrl: validateLocalUrl(options.localUrl),
         environmentId: resolveEnvironmentId(options)
       });
-      await connection.start();
-      return connection;
     }
 
     const targetBaseUrl = resolveTargetBaseUrl(options);
     validateTargetBaseUrl(targetBaseUrl);
 
-    const connection = new PublicConnection(this, {
+    return new PublicConnection(this, {
       ...options,
       routeId,
       targetBaseUrl
     });
-    await connection.start();
-    return connection;
   }
 }
 
@@ -84,6 +97,7 @@ class PublicConnection implements Connection {
   readonly transport = "public" as const;
   forwardToken = "";
   connectionToken = "";
+  connectionState: ConnectionStateReason = "connecting";
   readonly environmentId?: string;
 
   get connected(): boolean {
@@ -94,6 +108,11 @@ class PublicConnection implements Connection {
   private readonly closed = new AbortController();
   private heartbeatTimer: ReturnType<typeof setTimeout> | undefined;
   private disconnected = false;
+  private loopStarted = false;
+  private readySettled = false;
+  private markReady: () => void = () => undefined;
+  private failReady: (error: Error) => void = () => undefined;
+  private readonly ready: Promise<void>;
   private readonly onSignal = (): void => {
     void this.disconnect();
   };
@@ -107,16 +126,56 @@ class PublicConnection implements Connection {
     this.targetBaseUrl = options.targetBaseUrl;
     this.publicUrl = publicIngressUrl(client.routerUrl, options.routeId);
     this.environmentId = resolveEnvironmentId(options);
+    this.ready = new Promise<void>((resolve, reject) => {
+      this.markReady = () => {
+        if (this.readySettled) {
+          return;
+        }
+        this.readySettled = true;
+        resolve();
+      };
+      this.failReady = (error) => {
+        if (this.readySettled) {
+          return;
+        }
+        this.readySettled = true;
+        reject(error);
+      };
+    });
+    void this.ready.catch(() => undefined);
+  }
+
+  begin(): void {
+    if (this.loopStarted) {
+      return;
+    }
+    this.loopStarted = true;
+    process.on("SIGINT", this.onSignal);
+    process.on("SIGTERM", this.onSignal);
+    void this.runStart();
+  }
+
+  whenReady(): Promise<void> {
+    return this.ready;
   }
 
   async start(): Promise<void> {
-    const registered = await retry(() => this.register(), this.closed.signal);
-    this.subscriberId = registered.subscriberId;
-    this.forwardToken = registered.forwardToken;
-    this.connectionToken = registered.connectionToken;
-    this.scheduleHeartbeat();
-    process.on("SIGINT", this.onSignal);
-    process.on("SIGTERM", this.onSignal);
+    this.begin();
+    await this.ready;
+  }
+
+  private async runStart(): Promise<void> {
+    try {
+      const registered = await retry(() => this.register(), this.closed.signal);
+      this.subscriberId = registered.subscriberId;
+      this.forwardToken = registered.forwardToken;
+      this.connectionToken = registered.connectionToken;
+      this.connectionState = "connected";
+      this.scheduleHeartbeat();
+      this.markReady();
+    } catch (error) {
+      this.failReady(error instanceof Error ? error : new Error("connection aborted"));
+    }
   }
 
   async disconnect(): Promise<void> {
@@ -124,6 +183,7 @@ class PublicConnection implements Connection {
       return;
     }
     this.disconnected = true;
+    this.connectionState = "disconnected";
     if (this.heartbeatTimer) {
       clearTimeout(this.heartbeatTimer);
     }
@@ -140,6 +200,7 @@ class PublicConnection implements Connection {
       }
     }
     this.closed.abort();
+    this.failReady(new Error("connection aborted"));
   }
 
   async wrapOAuthState(inner?: string): Promise<string> {
@@ -166,15 +227,26 @@ class PublicConnection implements Connection {
   }
 
   private async register(): Promise<RegisterSubscriberResponse> {
-    const response = await this.request(managementSubscriberPath(this.routeId), {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        targetBaseUrl: this.targetBaseUrl,
-        ...(this.environmentId ? { environmentId: this.environmentId } : {})
-      })
-    });
+    let response: Response;
+    try {
+      response = await this.request(managementSubscriberPath(this.routeId), {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          targetBaseUrl: this.targetBaseUrl,
+          ...(this.environmentId ? { environmentId: this.environmentId } : {})
+        })
+      });
+    } catch (error) {
+      this.connectionState = nextConnectionFailure(this.connectionState, error);
+      throw error;
+    }
     if (!response.ok) {
+      this.connectionState = nextConnectionFailure(
+        this.connectionState,
+        undefined,
+        response.status
+      );
       throw new RetryableError(`registration failed: ${response.status}`);
     }
     const payload = (await response.json()) as RegisterSubscriberResponse;

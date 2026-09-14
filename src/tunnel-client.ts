@@ -1,4 +1,9 @@
+import type { IncomingMessage } from "node:http";
 import WebSocket from "ws";
+import {
+  nextConnectionFailure,
+  type ConnectionStateReason
+} from "./connection-state";
 import { authorizedFetch } from "./management-fetch";
 import { wrapOAuthState } from "./oauth-state";
 import {
@@ -39,6 +44,7 @@ export class TunnelConnection implements Connection {
   readonly transport = "tunnel" as const;
   forwardToken = "";
   connectionToken = "";
+  connectionState: ConnectionStateReason = "connecting";
   readonly environmentId?: string;
 
   private readonly routerUrl: string;
@@ -46,6 +52,7 @@ export class TunnelConnection implements Connection {
   private lastPongAt = 0;
   private readonly closed = new AbortController();
   private disconnected = false;
+  private loopStarted = false;
   private serving = false;
   private socket: WebSocket | undefined;
   private pingTimer: ReturnType<typeof setInterval> | undefined;
@@ -86,12 +93,25 @@ export class TunnelConnection implements Connection {
         reject(error);
       };
     });
+    void this.ready.catch(() => undefined);
   }
 
-  async start(): Promise<void> {
+  begin(): void {
+    if (this.loopStarted) {
+      return;
+    }
+    this.loopStarted = true;
     process.on("SIGINT", this.onSignal);
     process.on("SIGTERM", this.onSignal);
     void this.runLoop();
+  }
+
+  whenReady(): Promise<void> {
+    return this.ready;
+  }
+
+  async start(): Promise<void> {
+    this.begin();
     await this.ready;
   }
 
@@ -105,6 +125,7 @@ export class TunnelConnection implements Connection {
     }
     this.disconnected = true;
     this.serving = false;
+    this.connectionState = "disconnected";
     this.clearPing();
     process.off("SIGINT", this.onSignal);
     process.off("SIGTERM", this.onSignal);
@@ -164,6 +185,7 @@ export class TunnelConnection implements Connection {
         await this.openAndServe();
         delay = 1_000;
       } catch (error) {
+        this.noteFailure(error);
         if (this.disconnected || this.closed.signal.aborted) {
           this.failReady(error instanceof Error ? error : new Error("connection aborted"));
           return;
@@ -180,9 +202,15 @@ export class TunnelConnection implements Connection {
     );
     const socket = new WebSocket(url, [tunnelSubprotocol(this.secret)]);
     this.socket = socket;
+    socket.on("unexpected-response", (_request, response: IncomingMessage) => {
+      this.noteFailure(undefined, response.statusCode);
+      response.resume();
+      socket.terminate();
+    });
     await waitForOpen(socket, this.closed.signal);
     await this.waitForHello(socket);
     this.serving = true;
+    this.connectionState = "connected";
     this.markReady();
     this.startPing(socket);
     try {
@@ -193,7 +221,19 @@ export class TunnelConnection implements Connection {
       if (this.socket === socket) {
         this.socket = undefined;
       }
+      if (!this.disconnected && this.connectionState === "connected") {
+        this.connectionState = "connecting";
+      }
     }
+  }
+
+  private noteFailure(error: unknown, statusCode?: number): void {
+    if (this.disconnected) {
+      this.connectionState = "disconnected";
+      return;
+    }
+    const next = nextConnectionFailure(this.connectionState, error, statusCode);
+    this.connectionState = next;
   }
 
   private waitForHello(socket: WebSocket): Promise<void> {

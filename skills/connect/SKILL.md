@@ -1,27 +1,29 @@
 ---
 name: connect
 description: >
-  Use when connecting a remote cloud development environment to
-  @powerboard/dev-router via `npx dev-router connect`, DevRouterClient,
-  DEV_ROUTER_URL, DEV_ROUTER_SECRET, DEV_ROUTER_ROUTE, --route, --local-url,
-  DEV_ROUTER_LOCAL_URL, --target, PUBLIC_DEV_URL, --environment-id,
+  Use when connecting a remote cloud development environment or a local
+  Portless session to @powerboard/dev-router via `npx dev-router connect`,
+  DevRouterClient, DEV_ROUTER_URL, DEV_ROUTER_SECRET, DEV_ROUTER_ROUTE, --route,
+  --local-url, DEV_ROUTER_LOCAL_URL, --target, PUBLIC_DEV_URL, --environment-id,
   DEV_ROUTER_ENVIRONMENT_ID, control server /ready /oauth-states, Amp orbs,
-  Cursor Cloud Agents, Codespaces, Gitpod, Replit, CI workers, or containers.
-  Covers reverse-tunnel sidecar install, optional public HTTPS targets, replica
-  mode OAuth, and binding app-generated OAuth state through the loopback control
-  server. Load forwarding for the public request contract; load deploy to
-  provision the shared Worker.
+  Cursor Cloud Agents, Codespaces, Gitpod, Replit, CI workers, containers, or
+  local development with Portless. Covers reverse-tunnel sidecar install,
+  supervisor .env loading, stable environment ids, optional public HTTPS
+  targets, replica mode OAuth, and binding app-generated OAuth state through
+  the loopback control server. Load forwarding for the public request contract;
+  load deploy to provision the shared Worker.
 metadata:
   purpose: Guidance for registering a cloud environment as a router subscriber using the CLI or DevRouterClient.
   type: core
   library: "@powerboard/dev-router"
-  library_version: "0.3.2"
+  library_version: "0.3.3"
 sources:
   - shansmith01/wrangle-webhooks:skills/connect/connect.md
   - shansmith01/wrangle-webhooks:src/cli.ts
   - shansmith01/wrangle-webhooks:src/client.ts
   - shansmith01/wrangle-webhooks:src/tunnel-client.ts
   - shansmith01/wrangle-webhooks:src/control-server.ts
+  - shansmith01/wrangle-webhooks:src/connection-state.ts
   - shansmith01/wrangle-webhooks:src/credentials.ts
   - shansmith01/wrangle-webhooks:src/detect-url.ts
   - shansmith01/wrangle-webhooks:src/shared.ts
@@ -95,7 +97,77 @@ services:
     health: /ready
 ```
 
-Amp injects `PORT` and `AMP_THREAD_ID`. `health: /ready` probes the sidecar control server (503 until the WebSocket is live). Mint `npx dev-router token` for this root connect; mint `npx dev-router token --route nomads` only when the command also has `--route nomads`.
+Amp injects `PORT` and `AMP_THREAD_ID`. `health: /ready` probes the sidecar control server (503 until the WebSocket is live; `reason` is `connecting`, `unauthorized`, or `network_error`). Mint `npx dev-router token` for this root connect; mint `npx dev-router token --route nomads` only when the command also has `--route nomads`.
+
+### Local development with Portless
+
+Portless assigns `PORT` only inside its child process. Start the API and the sidecar from that child:
+
+```bash
+dev-router connect --local-url "http://127.0.0.1:${PORT}" --environment-id "$DEV_ROUTER_ENVIRONMENT_ID"
+```
+
+Load `.env` into the **supervising shell** before it checks `DEV_ROUTER_URL` or `DEV_ROUTER_SECRET`. Bun can load `.env` for the application without exporting those values to the supervisor.
+
+Do not `source .env`. Values can contain spaces and shell characters. Use a dotenv parser. Accept readable `.env` sources, including named pipes (`test -r`, not `test -f`). Report secret **presence** only. Never `set -x`, print the environment, or show credential values.
+
+```bash
+# macOS Bash 3.2. test -r allows named pipes; test -f does not.
+if [ -r .env ]; then
+  eval "$(ENV_FILE=.env node -e '
+const fs = require("fs");
+for (const raw of fs.readFileSync(process.env.ENV_FILE, "utf8").split(/\r?\n/)) {
+  const line = raw.trim();
+  if (!line || line.startsWith("#")) continue;
+  const body = line.startsWith("export ") ? line.slice(7).trim() : line;
+  const eq = body.indexOf("=");
+  if (eq <= 0) continue;
+  const key = body.slice(0, eq).trim();
+  if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(key)) continue;
+  let value = body.slice(eq + 1).trim();
+  if ((value.startsWith("\"") && value.endsWith("\"")) || (value.startsWith("'\''") && value.endsWith("'\''"))) {
+    value = value.slice(1, -1);
+  }
+  process.stdout.write("export " + key + "=" + JSON.stringify(value) + "\n");
+}
+')"
+fi
+if [ -n "${DEV_ROUTER_SECRET:-}" ]; then echo "DEV_ROUTER_SECRET is set"; else echo "DEV_ROUTER_SECRET is missing"; fi
+```
+
+Verify the executable, not only the package listing:
+
+```bash
+bun pm ls @powerboard/dev-router
+test -x node_modules/.bin/dev-router
+```
+
+Use a stable local environment id. Do not use a PID — PIDs change after restart and create parked stale subscribers.
+
+```bash
+host=$(hostname -s | tr "[:upper:]" "[:lower:]" | sed "s/[^A-Za-z0-9._~:@+-]/-/g")
+path_hash=$(printf "%s" "$PWD" | shasum -a 256 | cut -c1-12)
+export DEV_ROUTER_ENVIRONMENT_ID="local-${host}-${path_hash}"
+```
+
+`--environment-id` is at most 128 characters and only `A-Z a-z 0-9 . _ ~ : @ + -`.
+
+The control server listens immediately. `GET /ready` returns 503 with a safe `reason` (`connecting`, `unauthorized`, `network_error`) until the WebSocket is live. Port 8790 closed means the sidecar process is not running. A running sidecar with 503 `unauthorized` is rejected authentication, not a missing process. On package versions before 0.3.3, 8790 opened only after the WebSocket succeeded, so a running sidecar with no listener could also mean 401 or a network problem.
+
+Safe 401 path (do not print secrets or `Authorization` headers):
+
+```bash
+curl -sS http://127.0.0.1:8790/ready
+# {"ready":false,"reason":"unauthorized",...}
+```
+
+The Worker **operator** secret can join any route. A minted **root** credential (`npx dev-router token`) joins only when connect omits `--route`. A minted **named** credential (`npx dev-router token --route nomads`) joins only that route. Mixing them yields WebSocket upgrade 401.
+
+macOS Bash 3.2: empty array expansion under `set -u` terminates the supervisor (`args=(); cmd "${args[@]}"`). Use `${args[@]+"${args[@]}"}` or skip the expansion when `${#args[@]}` is 0.
+
+Ctrl+C must stop the API and sidecar but leave the shared Portless proxy running.
+
+Public HTTP 202 only confirms fan-out acceptance. Require a unique marker in the local API log and a local HTTP 200 before declaring success.
 
 ### Bind OAuth state from the app process
 
@@ -107,7 +179,7 @@ POST http://127.0.0.1:8790/oauth-states
 {"state":"<app-generated-state>"}
 ```
 
-Required when another replica is already subscribed to the same route. A lone subscriber is routed automatically. `GET /ready` returns 503 until the tunnel WebSocket is connected, not merely because a subscriber id still exists.
+Required when another replica is already subscribed to the same route. A lone subscriber is routed automatically. `GET /ready` returns 503 with a safe `reason` until the tunnel WebSocket is connected, not merely because a subscriber id still exists.
 
 ### Optional public-target transport
 
@@ -201,9 +273,33 @@ Source: `src/shared.ts`
 
 Wrong: treating `/ready` as 200 during reconnect just because `--environment-id` parked a subscriber id.
 
-Correct: `/ready` returns 503 until the live WebSocket is connected. Amp `health: /ready` should fail while the sidecar is backing off.
+Correct: `/ready` returns 503 with `reason` `connecting`, `unauthorized`, or `network_error` until the live WebSocket is connected. Amp `health: /ready` should fail while the sidecar is backing off. A closed port 8790 means the process is not listening; `unauthorized` means the join credential was rejected.
 
 Source: `src/control-server.ts`, `src/tunnel-client.ts`
+
+### HIGH Using a PID as --environment-id
+
+Wrong: `--environment-id "local-$$"` or any per-process id.
+
+Correct: `local-<sanitized-hostname>-<checkout-path-hash>`. PIDs change after restart and park stale subscribers. Max 128 characters; only `A-Za-z0-9._~:@+-`.
+
+Source: `src/shared.ts`
+
+### HIGH Sourcing .env in the supervisor
+
+Wrong: `set -x; source .env` or `test -f .env`.
+
+Correct: parse `.env` with a dotenv reader after `test -r` (named pipes are readable, not regular files). Report whether `DEV_ROUTER_SECRET` is set; never print its value.
+
+Source: `skills/connect/connect.md`
+
+### HIGH Declaring Portless success from a public 202
+
+Wrong: treating the Worker’s webhook `202` as proof the local API handled the request.
+
+Correct: require a unique marker in the local API log and a local HTTP 200. Public 202 only confirms fan-out acceptance.
+
+Source: `skills/forwarding/forwarding.md`, `src/worker.ts`
 
 ### HIGH Declaring a new environment ready without OAuth
 
@@ -215,7 +311,7 @@ Source: `skills/connect/connect.md`
 
 ## Completion
 
-The CLI prints `Public:`, `Forwarding to:`, and `Control:`. Tunnel mode prints that the local URL is not visible to the Worker. SIGINT/SIGTERM closes the WebSocket and then DELETE. Anonymous tunnel subscribers are removed immediately; `--environment-id` parks the subscriber so OAuth bindings survive a reconnect.
+The CLI prints `Public:`, `Forwarding to:`, and `Control:` as soon as the control server binds (8790 listens before the WebSocket is up). Tunnel mode prints that the local URL is not visible to the Worker. SIGINT/SIGTERM closes the WebSocket and then DELETE. Anonymous tunnel subscribers are removed immediately; `--environment-id` parks the subscriber so OAuth bindings survive a reconnect. On a Portless laptop, Ctrl+C must stop the API and sidecar but leave the shared Portless proxy running.
 
 Do not stop at “connected.” Tell the operator, in substance:
 

@@ -13,6 +13,10 @@ function fakeConnection(): Connection {
     connectionToken: "ct_test",
     environmentId: "amp-thread-1",
     connected: true,
+    connectionState: "connected",
+    async whenReady() {
+      return;
+    },
     async disconnect() {
       return;
     },
@@ -47,6 +51,8 @@ describe("sidecar control server", () => {
       connectionToken: "ct_test",
       environmentId: "amp-thread-1",
       connected: true,
+      connectionState: "connected",
+      whenReady: async () => undefined,
       disconnect: async () => undefined,
       wrapOAuthState: async (inner) => `wrapped:${inner ?? ""}`,
       bindOAuthState: async (state) => {
@@ -62,6 +68,7 @@ describe("sidecar control server", () => {
       ok: true,
       ready: true,
       connected: true,
+      reason: "connected",
       subscriberId: "sub_abc",
       routeId: "nomads",
       environmentId: "amp-thread-1"
@@ -102,7 +109,8 @@ describe("sidecar control server", () => {
 
   it("returns 503 until the live connection is up, even if a subscriber id is parked", async () => {
     const connection = fakeConnection();
-    (connection as { connected: boolean }).connected = false;
+    (connection as { connected: boolean; connectionState: string }).connected = false;
+    (connection as { connectionState: string }).connectionState = "connecting";
     const server = await startControlServer(connection, { port: 0 });
     servers.push(server);
 
@@ -111,12 +119,31 @@ describe("sidecar control server", () => {
     expect(await down.json()).toMatchObject({
       ready: false,
       connected: false,
+      reason: "connecting",
       subscriberId: "sub_abc"
     });
 
     (connection as { connected: boolean }).connected = true;
+    (connection as { connectionState: string }).connectionState = "connected";
     const up = await fetch(`${server.url}/ready`);
     expect(up.status).toBe(200);
-    expect(await up.json()).toMatchObject({ ready: true, connected: true });
+    expect(await up.json()).toMatchObject({ ready: true, connected: true, reason: "connected" });
+  });
+
+  it("reports a safe unauthorized reason while the control port is already open", async () => {
+    const connection = fakeConnection();
+    (connection as { connected: boolean }).connected = false;
+    (connection as { connectionState: string }).connectionState = "unauthorized";
+    const server = await startControlServer(connection, { port: 0 });
+    servers.push(server);
+
+    const denied = await fetch(`${server.url}/ready`);
+    expect(denied.status).toBe(503);
+    expect(await denied.json()).toMatchObject({
+      ready: false,
+      connected: false,
+      reason: "unauthorized",
+      subscriberId: "sub_abc"
+    });
   });
 });

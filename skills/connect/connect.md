@@ -59,9 +59,9 @@ npx dev-router connect --route nomads --local-url http://127.0.0.1:3000
 
 The same `--local-url` interface is used on Amp, Codespaces, Cursor, CI, containers, and private VMs. The Worker multiplexes public HTTP over the WebSocket. The client heartbeats with WebSocket `ping`/`pong`, reconnects with backoff, and closes the socket if a pong is missing for 75 seconds. SIGINT/SIGTERM closes the socket so anonymous subscribers are removed immediately. Pass `--environment-id` so reconnects reuse the same subscriber and keep pending OAuth bindings for five minutes.
 
-The sidecar also listens on loopback (`http://127.0.0.1:8790` by default):
+The sidecar also listens on loopback (`http://127.0.0.1:8790` by default) **as soon as the process starts**, before the tunnel WebSocket is up:
 
-- `GET /ready` — Amp / process-manager readiness. Returns **503 until the live WebSocket is connected**. A parked `--environment-id` subscriber is not ready during reconnect.
+- `GET /ready` — Amp / process-manager readiness. Returns **503 until the live WebSocket is connected**, with a safe `reason` (`connecting`, `unauthorized`, `network_error`). A parked `--environment-id` subscriber is not ready during reconnect. A closed 8790 means the sidecar process is not running; `reason: "unauthorized"` is a rejected join credential, not a missing process.
 - `POST /oauth-states` `{ "state": "..." }` — bind this replica’s OAuth `state`
 - `POST /oauth-wrap` `{ "inner": "..." }` — wrap a nonce without importing router crypto
 
@@ -91,7 +91,78 @@ services:
     health: /ready
 ```
 
-`health: /ready` is a GET to the **router** service (`127.0.0.1:8790/ready`), not the app. It stays 503 until the tunnel WebSocket is up. The app binds OAuth state with `POST http://127.0.0.1:8790/oauth-states`. Mint the matching root credential with `npx dev-router token`. For a named prefix, add `--route <id>` to `command` and mint `npx dev-router token --route <id>`.
+`health: /ready` is a GET to the **router** service (`127.0.0.1:8790/ready`), not the app. It stays 503 until the tunnel WebSocket is up (`reason` is `connecting`, `unauthorized`, or `network_error`). The app binds OAuth state with `POST http://127.0.0.1:8790/oauth-states`. Mint the matching root credential with `npx dev-router token`. For a named prefix, add `--route <id>` to `command` and mint `npx dev-router token --route <id>`.
+
+## Local development with Portless
+
+When the laptop uses Portless as a local HTTPS proxy, the sidecar still reverse-tunnels to the API. Several details are easy to get wrong.
+
+The Portless-assigned `PORT` exists only inside the Portless child. Start the API and sidecar from that child:
+
+```bash
+dev-router connect --local-url "http://127.0.0.1:${PORT}" --environment-id "$DEV_ROUTER_ENVIRONMENT_ID"
+```
+
+Load `.env` into the supervising shell **before** it checks `DEV_ROUTER_URL` or `DEV_ROUTER_SECRET`. Bun can load `.env` for the application without exporting those values to the supervisor.
+
+Do not `source .env`. Values can contain spaces and shell characters. Use a dotenv parser. Accept readable `.env` sources, including named pipes: `test -r`, not `test -f`. Report secret presence only. Never `set -x`, print the environment, or show credential values.
+
+```bash
+# macOS Bash 3.2. test -r allows named pipes; test -f does not.
+if [ -r .env ]; then
+  eval "$(ENV_FILE=.env node -e '
+const fs = require("fs");
+for (const raw of fs.readFileSync(process.env.ENV_FILE, "utf8").split(/\r?\n/)) {
+  const line = raw.trim();
+  if (!line || line.startsWith("#")) continue;
+  const body = line.startsWith("export ") ? line.slice(7).trim() : line;
+  const eq = body.indexOf("=");
+  if (eq <= 0) continue;
+  const key = body.slice(0, eq).trim();
+  if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(key)) continue;
+  let value = body.slice(eq + 1).trim();
+  if ((value.startsWith("\"") && value.endsWith("\"")) || (value.startsWith("'\''") && value.endsWith("'\''"))) {
+    value = value.slice(1, -1);
+  }
+  process.stdout.write("export " + key + "=" + JSON.stringify(value) + "\n");
+}
+')"
+fi
+if [ -n "${DEV_ROUTER_SECRET:-}" ]; then echo "DEV_ROUTER_SECRET is set"; else echo "DEV_ROUTER_SECRET is missing"; fi
+```
+
+Verify the executable, not only the package listing:
+
+```bash
+bun pm ls @powerboard/dev-router
+test -x node_modules/.bin/dev-router
+```
+
+The control server binds immediately. `GET /ready` is 503 with a safe `reason` until the WebSocket is live. Port 8790 closed means the sidecar process is not running. A running sidecar with `reason: "unauthorized"` is rejected authentication. On package versions before 0.3.3, 8790 opened only after the WebSocket succeeded, so a running sidecar with no listener could also mean 401 or a network problem.
+
+Safe HTTP 401 path for the WebSocket upgrade — inspect `/ready` only; do not print secrets:
+
+```bash
+curl -sS http://127.0.0.1:8790/ready
+```
+
+The Worker **operator** secret can join any route. A minted **root** credential (`npx dev-router token`) matches connect with no `--route`. A minted **named** credential (`npx dev-router token --route nomads`) matches that `--route` only. Mixing operator vs minted, or root vs named, yields upgrade 401.
+
+Use a stable local environment id. Do not use a PID. PIDs change after restart and create parked stale subscribers.
+
+```bash
+host=$(hostname -s | tr "[:upper:]" "[:lower:]" | sed "s/[^A-Za-z0-9._~:@+-]/-/g")
+path_hash=$(printf "%s" "$PWD" | shasum -a 256 | cut -c1-12)
+export DEV_ROUTER_ENVIRONMENT_ID="local-${host}-${path_hash}"
+```
+
+`--environment-id` / `DEV_ROUTER_ENVIRONMENT_ID` is at most 128 characters and only `A-Z a-z 0-9 . _ ~ : @ + -`.
+
+macOS ships Bash 3.2. Empty array expansion under `set -u` can terminate the supervisor (`args=(); cmd "${args[@]}"`). Use `${args[@]+"${args[@]}"}` or skip the expansion when the array is empty.
+
+Ctrl+C must stop the API and sidecar but leave the shared Portless proxy running.
+
+Public HTTP 202 only confirms fan-out acceptance. Require a unique marker in the local API log and a local HTTP 200 before declaring success.
 
 ## Replica mode: OAuth this environment before webhooks matter
 
@@ -153,6 +224,8 @@ await connection.disconnect();
 
 `localUrl` must be an absolute `http://` or `https://` URL without credentials. It is fetched only by the sidecar.
 
+`client.open()` starts the tunnel (or public registration) without waiting. The CLI uses that so the control server can bind immediately. `connect()` is `open()` plus `whenReady()`. `GET /ready` reads `connection.connectionState` (`connecting` | `connected` | `unauthorized` | `network_error` | `disconnected`) and never includes credential values.
+
 ## Environment and flags
 
 | Name | Role |
@@ -162,8 +235,8 @@ await connection.disconnect();
 | `DEV_ROUTER_ROUTE` / `--route` | Optional public path prefix (`A-Za-z0-9._~-`, not `_router` or `dashboard`) |
 | `DEV_ROUTER_PORT` / `PORT` / `--port` | Local app port used when constructing a detected public URL (default `3000`) |
 | `DEV_ROUTER_LOCAL_URL` / `--local-url` | Local HTTP origin for reverse-tunnel mode |
-| `DEV_ROUTER_ENVIRONMENT_ID` / `--environment-id` | Stable subscriber identity across reconnects |
-| `DEV_ROUTER_CONTROL_PORT` / `--control-port` | Loopback control port (default `8790`) |
+| `DEV_ROUTER_ENVIRONMENT_ID` / `--environment-id` | Stable subscriber identity across reconnects (max 128; `A-Za-z0-9._~:@+-`; no PID) |
+| `DEV_ROUTER_CONTROL_PORT` / `--control-port` | Loopback control port (default `8790`; listens immediately) |
 | `DEV_ROUTER_CONTROL_SOCKET` / `--control-socket` | Unix socket instead of TCP |
 | `DEV_ROUTER_CONTROL_TOKEN` / `--control-token` | Optional bearer token for the control server |
 | `PUBLIC_DEV_URL` / `--target` | Optional public HTTPS origin (public-target transport) |

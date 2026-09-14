@@ -1,6 +1,7 @@
 import http from "node:http";
 import type { AddressInfo } from "node:net";
 import { afterEach, describe, expect, it } from "vitest";
+import { startControlServer } from "../../src/control-server";
 import { TunnelConnection } from "../../src/tunnel-client";
 import type { TunnelRequestMessage } from "../../src/tunnel-protocol";
 
@@ -68,6 +69,68 @@ describe("TunnelConnection.forwardLocal", () => {
     expect(response.status).toBe(200);
     expect(receivedHost).toBe(localHost);
     expect(receivedForwardedHost).toBe(publicHost);
+  });
+});
+
+describe("TunnelConnection control surface while connecting", () => {
+  const servers: http.Server[] = [];
+  const closers: Array<() => Promise<void>> = [];
+
+  afterEach(async () => {
+    while (closers.length > 0) {
+      const close = closers.pop();
+      await close?.();
+    }
+    while (servers.length > 0) {
+      const server = servers.pop();
+      await new Promise<void>((resolve, reject) => {
+        server?.close((error) => {
+          if (error) {
+            reject(error);
+            return;
+          }
+          resolve();
+        });
+      });
+    }
+  });
+
+  it("serves GET /ready with unauthorized when the WebSocket upgrade is 401", async () => {
+    const denied = http.createServer((_req, res) => {
+      res.writeHead(401, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ error: "unauthorized" }));
+    });
+    servers.push(denied);
+    const port = await listen(denied);
+
+    const connection = new TunnelConnection({
+      routerUrl: `http://127.0.0.1:${port}`,
+      secret: "wrong-secret",
+      routeId: "",
+      localUrl: "http://127.0.0.1:3000"
+    });
+    connection.begin();
+    const control = await startControlServer(connection, { port: 0 });
+    closers.push(async () => {
+      await control.close();
+      await connection.disconnect();
+    });
+
+    const connecting = await fetch(`${control.url}/ready`);
+    expect(connecting.status).toBe(503);
+    expect(await connecting.json()).toMatchObject({
+      ready: false,
+      connected: false
+    });
+
+    await expect.poll(() => connection.connectionState).toBe("unauthorized");
+    const ready = await fetch(`${control.url}/ready`);
+    expect(ready.status).toBe(503);
+    expect(await ready.json()).toMatchObject({
+      ready: false,
+      connected: false,
+      reason: "unauthorized"
+    });
   });
 });
 

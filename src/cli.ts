@@ -90,7 +90,7 @@ async function main(): Promise<void> {
   }
 
   const client = new DevRouterClient({ routerUrl, secret });
-  const connection = await client.connect({
+  const connection = client.open({
     routeId,
     localUrl,
     targetBaseUrl: localUrl ? undefined : targetBaseUrl,
@@ -109,8 +109,8 @@ async function main(): Promise<void> {
 
   console.log(
     connection.transport === "tunnel"
-      ? "Dev router connected (reverse tunnel)"
-      : "Dev router connected"
+      ? "Dev router starting (reverse tunnel)"
+      : "Dev router starting"
   );
   console.log("");
   console.log("Public:");
@@ -132,7 +132,27 @@ async function main(): Promise<void> {
     console.log("");
     console.log("Control:");
     console.log(`${control.url}/ready`);
+    console.log(
+      "GET /ready returns 503 with a connection-state reason until the WebSocket is live."
+    );
   }
+  console.log("");
+  console.log("Press Ctrl+C to disconnect.");
+
+  try {
+    await connection.whenReady();
+  } catch (error) {
+    await control?.close();
+    await connection.disconnect();
+    throw error;
+  }
+
+  console.log("");
+  console.log(
+    connection.transport === "tunnel"
+      ? "Dev router connected (reverse tunnel)"
+      : "Dev router connected"
+  );
   console.log("");
   console.log("Replica mode: this environment is subscribed, not yet provider-ready.");
   console.log("Next step: complete the app's OAuth to the third-party provider in this");
@@ -141,8 +161,6 @@ async function main(): Promise<void> {
   if (control) {
     console.log("Bind OAuth state from the app process: POST /oauth-states on the Control URL.");
   }
-  console.log("");
-  console.log("Press Ctrl+C to disconnect.");
 
   await waitForShutdownSignal();
   await control?.close();
@@ -174,6 +192,8 @@ function printUsage(): void {
 Reverse tunnel (--local-url) is the default for private cloud environments
 such as Amp orbs, Codespaces, Cursor, CI workers, and containers. The sidecar
 opens an outbound WebSocket and forwards requests to the local HTTP server.
+The loopback control server (default port 8790) listens immediately; GET /ready
+returns 503 with a connection-state reason until the WebSocket is live.
 
 Public-target (--target / PUBLIC_DEV_URL) remains available when the
 environment already has a public https:// origin the Worker can fetch.
@@ -192,7 +212,7 @@ Environment:
   DEV_ROUTER_PORT             Local app port used when constructing a detected URL (default 3000)
   DEV_ROUTER_LOCAL_URL        Local HTTP origin for reverse-tunnel mode
   DEV_ROUTER_ENVIRONMENT_ID   Stable identity across reconnects
-  DEV_ROUTER_CONTROL_PORT     Loopback control port (default 8790)
+  DEV_ROUTER_CONTROL_PORT     Loopback control port (default 8790; listens immediately)
   DEV_ROUTER_CONTROL_SOCKET   Unix socket path instead of a TCP port
   DEV_ROUTER_CONTROL_TOKEN    Optional bearer token for the control server
   PUBLIC_DEV_URL              Optional public https:// origin (public-target transport)`);

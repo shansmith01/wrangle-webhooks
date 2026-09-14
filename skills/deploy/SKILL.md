@@ -11,7 +11,7 @@ metadata:
   purpose: Guidance for deploying and operating the shared ingress Worker.
   type: lifecycle
   library: "@powerboard/dev-router"
-  library_version: "0.3.2"
+  library_version: "0.3.3"
 sources:
   - shansmith01/wrangle-webhooks:skills/deploy/deploy.md
   - shansmith01/wrangle-webhooks:wrangler.jsonc

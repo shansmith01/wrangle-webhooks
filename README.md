@@ -87,9 +87,9 @@ Content-Type: application/json
 {"state":"<app-generated-state>"}
 ```
 
-`GET /ready` is the Amp / process-manager readiness probe. It returns **503 until the live WebSocket is connected**. A parked subscriber id from `--environment-id` is not enough; reconnection is not ready. `--control-socket` uses a Unix socket instead of TCP. `--no-control` disables the listener. The control server binds loopback only.
+`GET /ready` is the Amp / process-manager readiness probe. The control server **listens immediately**. It returns **503 until the live WebSocket is connected**, with a safe `reason` (`connecting`, `unauthorized`, `network_error`). A parked subscriber id from `--environment-id` is not enough; reconnection is not ready. A closed port 8790 means the sidecar process is not running; `unauthorized` means the join credential was rejected. `--control-socket` uses a Unix socket instead of TCP. `--no-control` disables the listener. The control server binds loopback only.
 
-`--environment-id` / `DEV_ROUTER_ENVIRONMENT_ID` keeps the same logical subscriber (and pending OAuth bindings) across WebSocket reconnects. Use a per-orb value such as `AMP_THREAD_ID`. A new process that reuses the same id replaces the old socket.
+`--environment-id` / `DEV_ROUTER_ENVIRONMENT_ID` keeps the same logical subscriber (and pending OAuth bindings) across WebSocket reconnects. Use a per-orb value such as `AMP_THREAD_ID`, or on a laptop `local-<sanitized-hostname>-<checkout-path-hash>`. Do not use a PID. A new process that reuses the same id replaces the old socket. The id is at most 128 characters and only `A-Za-z0-9._~:@+-`.
 
 Each new cloud environment is a full replica. After `connect`, the first operator action is: open the app **in this environment** and finish OAuth. Do that after the sidecar is up (otherwise the callback is `404`). Tokens stay in this environment; the next orb repeats OAuth. Webhook fan-out is only useful for replicas that already have those tokens.
 
@@ -102,6 +102,8 @@ npx --yes @powerboard/dev-router connect --route nomads --local-url http://127.0
 Do not run `npx dev-router` in a project that has not installed this package. npm will look up an unrelated public package named `dev-router`. Prefer `npx --yes @powerboard/dev-router connect` or install first.
 
 `--local-url` can be any origin the sidecar can fetch (`http://127.0.0.1:3000`, `http://app:3000`, `http://host.docker.internal:5173`). It does not need to be loopback, and it does not need to be reachable from Cloudflare.
+
+On a laptop with Portless, `PORT` exists only inside the Portless child. Start the API and sidecar there (`--local-url http://127.0.0.1:$PORT`). Supervisor and environment-id details are in [Connect a cloud environment](skills/connect/connect.md#local-development-with-portless).
 
 The client heartbeats over the WebSocket, reconnects with backoff, and fails the socket if a pong is missing for 75 seconds. On SIGINT/SIGTERM it closes the socket **before** aborting other work. Anonymous tunnel subscribers are removed as soon as the socket closes. Environment-identified subscribers stay parked for five minutes so an in-flight OAuth callback can still be correlated after a reconnect. Stale tunnels with no ping are expired by the Worker.
 

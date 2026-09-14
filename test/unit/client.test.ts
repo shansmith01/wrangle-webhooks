@@ -137,4 +137,57 @@ describe("DevRouterClient", () => {
       })
     ).rejects.toThrow(/mutually exclusive/);
   });
+
+  it("open() returns a connecting client before registration completes", async () => {
+    let release!: (value: Response) => void;
+    const gate = new Promise<Response>((resolve) => {
+      release = resolve;
+    });
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => gate)
+    );
+
+    const client = new DevRouterClient({
+      routerUrl: "https://dev-webhooks.example.com",
+      secret: "test-secret"
+    });
+    const connection = client.open({
+      routeId: "my-web-app",
+      targetBaseUrl: "https://abc123.cloud-dev.example"
+    });
+    expect(connection.connected).toBe(false);
+    expect(connection.connectionState).toBe("connecting");
+
+    release(
+      Response.json({
+        subscriberId: "sub_abc123",
+        routeId: "my-web-app",
+        expiresIn: 300,
+        forwardToken: "ft_testtoken"
+      })
+    );
+    await connection.whenReady();
+    expect(connection.connected).toBe(true);
+    expect(connection.connectionState).toBe("connected");
+    await connection.disconnect();
+  });
+
+  it("records unauthorized when join returns 401", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => new Response("unauthorized", { status: 401 }))
+    );
+
+    const client = new DevRouterClient({
+      routerUrl: "https://dev-webhooks.example.com",
+      secret: "wrong-secret"
+    });
+    const connection = client.open({
+      targetBaseUrl: "https://abc123.cloud-dev.example"
+    });
+    await expect.poll(() => connection.connectionState).toBe("unauthorized");
+    expect(connection.connected).toBe(false);
+    await connection.disconnect();
+  });
 });

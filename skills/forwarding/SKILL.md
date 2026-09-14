@@ -11,7 +11,7 @@ metadata:
   purpose: Guidance for the public ingress path and what subscribers actually receive.
   type: core
   library: "@powerboard/dev-router"
-  library_version: "0.3.2"
+  library_version: "0.3.3"
 sources:
   - shansmith01/wrangle-webhooks:skills/forwarding/forwarding.md
   - shansmith01/wrangle-webhooks:src/worker.ts

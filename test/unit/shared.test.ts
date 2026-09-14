@@ -108,8 +108,12 @@ describe("isAllowedEnvironmentId", () => {
   it("accepts stable cloud environment identifiers", () => {
     expect(isAllowedEnvironmentId("amp-thread-1")).toBe(true);
     expect(isAllowedEnvironmentId("11111111-1111-1111-1111-111111111111")).toBe(true);
+    expect(isAllowedEnvironmentId("local-host.example:@+dev")).toBe(true);
+    expect(isAllowedEnvironmentId("a".repeat(128))).toBe(true);
     expect(isAllowedEnvironmentId("")).toBe(false);
     expect(isAllowedEnvironmentId("has space")).toBe(false);
+    expect(isAllowedEnvironmentId("a".repeat(129))).toBe(false);
+    expect(isAllowedEnvironmentId("has/slash")).toBe(false);
   });
 });
 
