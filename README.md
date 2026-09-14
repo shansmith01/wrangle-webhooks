@@ -19,12 +19,21 @@ Shared Cloudflare Worker + Durable Object
       +--> optional public https:// origin
 ```
 
-`routeId` is an optional public path prefix, not a private identifier:
+`routeId` is an optional **public path prefix**, not a private identifier. Omitting `--route` (and `DEV_ROUTER_ROUTE`) publishes at the router root, so provider URLs have no project prefix:
 
-- omitted / empty → `https://dev-webhooks.example.com/oauth/callback`
-- `my-web-app` → `https://dev-webhooks.example.com/my-web-app/oauth/callback`
+- omit `--route` → `https://dev-webhooks.example.com/oauth/callback`
+- `--route my-web-app` → `https://dev-webhooks.example.com/my-web-app/oauth/callback`
 
-If a named route has active subscribers, it wins for that prefix. Otherwise an empty-route subscriber receives the full path.
+If a named route has active subscribers, it wins for that prefix. Otherwise a root subscriber receives the full path.
+
+Mint a join credential that matches how the sidecar will connect. Use the **operator** secret (`DEV_ROUTER_SECRET` on the Worker) only for minting:
+
+| Connect with | Mint with | Public URL |
+| --- | --- | --- |
+| omit `--route` | `npx dev-router token` | `https://dev-webhooks.example.com/*` |
+| `--route nomads` | `npx dev-router token --route nomads` | `https://dev-webhooks.example.com/nomads/*` |
+
+A root-scoped credential cannot join a named route. A named-route credential cannot join root or another route. Give orbs the minted value as `DEV_ROUTER_SECRET`; do not hand every environment the operator secret. The operator can also `GET /_router/credential` (root) or `GET /_router/routes/<routeId>/credential`.
 
 Webhooks fan out to every subscriber. OAuth callbacks are routed to **one** subscriber and that subscriber’s response is returned to the public caller.
 
@@ -35,11 +44,9 @@ Webhooks fan out to every subscriber. OAuth callbacks are routed to **one** subs
 | **App / cloud environment** | Sidecar CLI and `DevRouterClient` | [`npm install -D @powerboard/dev-router`](https://www.npmjs.com/package/@powerboard/dev-router) |
 | **Operator** | This repository’s Cloudflare Worker | Clone the repo, `npx wrangler deploy` |
 
-The published npm package is the **[client](https://www.npmjs.com/package/@powerboard/dev-router)**. The Worker source, Wrangler config, and Durable Objects live in this GitHub repository.
+The published npm package is the **[client](https://www.npmjs.com/package/@powerboard/dev-router)**. Its only runtime dependency is `ws`. Build and test tooling (TypeScript, tsup, Wrangler, Vitest) stays in this repository’s `devDependencies` and is not installed with the client. The Worker source, Wrangler config, and Durable Objects live in this GitHub repository.
 
-Management endpoints require `Authorization: Bearer <secret>`. Store the **operator** secret as the Worker secret `DEV_ROUTER_SECRET`. Mint a **route** credential for each project (`npx dev-router token --route nomads`) and give that value to orbs as `DEV_ROUTER_SECRET`. Do not hand every environment the operator secret.
-
-## Use the client in a remote cloud environment
+Management endpoints require `Authorization: Bearer <secret>`. Store the **operator** secret as the Worker secret `DEV_ROUTER_SECRET`.
 
 ## Use the client in a remote cloud environment
 
@@ -51,12 +58,12 @@ Amp orbs, Codespaces, Cursor, CI workers, containers, and private VMs use the sa
 npm install -D @powerboard/dev-router
 
 export DEV_ROUTER_URL=https://dev-webhooks.example.com
-export DEV_ROUTER_SECRET=<route credential from `dev-router token --route nomads`>
-# optional:
+export DEV_ROUTER_SECRET=<minted credential; see table above>
+# optional named prefix:
 export DEV_ROUTER_ROUTE=nomads
 export DEV_ROUTER_ENVIRONMENT_ID=$AMP_THREAD_ID
 
-npx dev-router connect --route nomads --local-url http://127.0.0.1:3000 --environment-id "$AMP_THREAD_ID"
+npx dev-router connect --local-url http://127.0.0.1:3000 --environment-id "$AMP_THREAD_ID"
 ```
 
 Or from `package.json`:
@@ -80,7 +87,7 @@ Content-Type: application/json
 {"state":"<app-generated-state>"}
 ```
 
-`GET /ready` is the Amp / process-manager readiness probe. `--control-socket` uses a Unix socket instead of TCP. `--no-control` disables the listener. The control server binds loopback only.
+`GET /ready` is the Amp / process-manager readiness probe. It returns **503 until the live WebSocket is connected**. A parked subscriber id from `--environment-id` is not enough; reconnection is not ready. `--control-socket` uses a Unix socket instead of TCP. `--no-control` disables the listener. The control server binds loopback only.
 
 `--environment-id` / `DEV_ROUTER_ENVIRONMENT_ID` keeps the same logical subscriber (and pending OAuth bindings) across WebSocket reconnects. Use a per-orb value such as `AMP_THREAD_ID`. A new process that reuses the same id replaces the old socket.
 
@@ -97,6 +104,40 @@ Do not run `npx dev-router` in a project that has not installed this package. np
 `--local-url` can be any origin the sidecar can fetch (`http://127.0.0.1:3000`, `http://app:3000`, `http://host.docker.internal:5173`). It does not need to be loopback, and it does not need to be reachable from Cloudflare.
 
 The client heartbeats over the WebSocket, reconnects with backoff, and fails the socket if a pong is missing for 75 seconds. On SIGINT/SIGTERM it closes the socket **before** aborting other work. Anonymous tunnel subscribers are removed as soon as the socket closes. Environment-identified subscribers stay parked for five minutes so an in-flight OAuth callback can still be correlated after a reconnect. Stale tunnels with no ping are expired by the Worker.
+
+### Amp orb example
+
+Commit `.amp/services.yaml` in the **app** repository (not this Worker repo). Amp injects `PORT` and `AMP_THREAD_ID`; do not set those in `env`. Store `DEV_ROUTER_URL` and the minted credential as Amp project secrets named `DEV_ROUTER_URL` and `DEV_ROUTER_SECRET`.
+
+This example uses **root routing** (no `--route`) and a **direct** readiness check: Amp GETs `/ready` on the sidecar control port, which is 503 until the WebSocket is live.
+
+```yaml
+services:
+  app:
+    command: npm run dev -- --host 0.0.0.0 --port "$PORT"
+    port: 3000
+    portal: true
+  router:
+    command: >-
+      npx dev-router connect
+      --local-url http://127.0.0.1:3000
+      --environment-id "$AMP_THREAD_ID"
+      --control-port "$PORT"
+    port: 8790
+    health: /ready
+```
+
+`amp orb services ensure` starts both processes. The app listens on 3000. The sidecar reverse-tunnels to that origin, binds the loopback control server on 8790 (`GET /ready`, `POST /oauth-states`), and keeps the same subscriber across reconnects via `AMP_THREAD_ID`.
+
+Mint the matching **root-scoped** credential on a machine that has the operator secret:
+
+```bash
+npx dev-router token
+```
+
+If you instead pass `--route nomads` on connect, mint `npx dev-router token --route nomads` and add `--route nomads` to the router `command`. Do not mix a root credential with a named `--route`.
+
+The app still binds OAuth `state` with `POST http://127.0.0.1:8790/oauth-states`. Amp’s `health: /ready` is a GET to the **router** service port (8790), not to the app.
 
 ### Optional public-target transport
 
@@ -145,7 +186,7 @@ Task documentation and Agent Skills:
 
 ## Request forwarding (subscriber apps)
 
-**Webhooks** fan out to every subscriber. The public caller receives `202` `{ "accepted": true }`. Subscriber status codes are not propagated.
+**Webhooks** fan out to every subscriber. The public caller receives `202` `{ "accepted": true }` as soon as the Worker accepts fan-out. That is **not** delivery proof: subscriber status codes are not propagated, and a 202 can succeed while a replica never handled the request. Confirm the payload in **each** subscriber’s logs before treating a fan-out test as successful.
 
 **OAuth** is single-target and returns the subscriber response (including redirects). Correlate with `wrapOAuthState()` / `bindOAuthState()` on the sidecar connection, or `POST http://127.0.0.1:8790/oauth-states` from the app process. If a route has exactly one subscriber, that subscriber is used. Multiple subscribers without a matching `state` return `409` `{ "error": "oauth_unroutable" }`.
 
@@ -166,7 +207,7 @@ npx wrangler secret put DEV_ROUTER_SECRET
 npx wrangler secret put DEV_ROUTER_DASHBOARD_PASSWORD
 ```
 
-Bind a hostname such as `dev-webhooks.example.com` in the Cloudflare dashboard. Point every client at that origin with `DEV_ROUTER_URL`. Mint route credentials with `npx dev-router token --route <routeId>` using the operator secret; give orbs only that route token. Clients need outbound HTTPS and WSS to that host.
+Bind a hostname such as `dev-webhooks.example.com` in the Cloudflare dashboard. Point every client at that origin with `DEV_ROUTER_URL`. Mint a root-scoped credential with `npx dev-router token`, or a named-route credential with `npx dev-router token --route <routeId>`, using the operator secret; give orbs only that token. Clients need outbound HTTPS and WSS to that host.
 
 `GET /dashboard` and `GET /dashboard.json` are password-gated status surfaces (HTTP Basic, password `DEV_ROUTER_DASHBOARD_PASSWORD`; username can be blank). They list active routes, subscriber counts, transport, and environment id. They do not return `DEV_ROUTER_SECRET`, route credentials, connection tokens, or forward tokens. Management bearer auth applies only to `/_router/*`.
 

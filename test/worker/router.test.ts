@@ -446,6 +446,16 @@ describe("scoped credentials", () => {
     );
     expect(denied.status).toBe(401);
   });
+
+  it("mints a root-scoped credential for the empty route", async () => {
+    const minted = await fetchWorker("https://dev-webhooks.example.com/_router/credential", {
+      headers: authHeaders()
+    });
+    expect(minted.status).toBe(200);
+    const body = (await minted.json()) as { routeId: string; secret: string };
+    expect(body.routeId).toBe("");
+    expect(body.secret).toBe(await deriveRouteSecret(env.DEV_ROUTER_SECRET, ""));
+  });
 });
 
 describe("stable environment identity", () => {

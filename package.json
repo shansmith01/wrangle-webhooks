@@ -1,6 +1,6 @@
 {
   "name": "@powerboard/dev-router",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "description": "Sidecar client for a shared Cloudflare ingress Worker: reverse tunnels and stable public URLs for ephemeral cloud development environments",
   "type": "module",
   "main": "./dist/client.js",
@@ -51,17 +51,15 @@
     "node": ">=20"
   },
   "dependencies": {
-    "tsup": "^8.5.0",
-    "typescript": "^5.9.2",
     "ws": "^8.21.3"
   },
   "devDependencies": {
+    "@cloudflare/vitest-pool-workers": "^0.12.4",
     "@tanstack/intent": "^0.4.0",
     "@types/node": "^24.5.2",
-    "@types/ws": "^8.18.1"
-  },
-  "optionalDependencies": {
-    "@cloudflare/vitest-pool-workers": "^0.12.4",
+    "@types/ws": "^8.18.1",
+    "tsup": "^8.5.0",
+    "typescript": "^5.9.2",
     "vitest": "^3.2.4",
     "wrangler": "^4.37.1"
   },

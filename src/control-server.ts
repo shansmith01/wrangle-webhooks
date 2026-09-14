@@ -87,9 +87,11 @@ async function handleControlRequest(
 
     const path = urlPath(req.url);
     if ((req.method === "GET" || req.method === "HEAD") && (path === "/ready" || path === "/status")) {
+      const ready = connection.connected;
       const body = {
         ok: true,
-        ready: Boolean(connection.subscriberId),
+        ready,
+        connected: ready,
         subscriberId: connection.subscriberId,
         routeId: connection.routeId,
         publicUrl: connection.publicUrl,
@@ -97,11 +99,11 @@ async function handleControlRequest(
         environmentId: connection.environmentId ?? null
       };
       if (req.method === "HEAD") {
-        res.writeHead(body.ready ? 200 : 503, { "Content-Type": "application/json" });
+        res.writeHead(ready ? 200 : 503, { "Content-Type": "application/json" });
         res.end();
         return;
       }
-      sendJson(res, body.ready ? 200 : 503, body);
+      sendJson(res, ready ? 200 : 503, body);
       return;
     }
 

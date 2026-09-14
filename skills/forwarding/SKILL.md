@@ -11,7 +11,7 @@ metadata:
   purpose: Guidance for the public ingress path and what subscribers actually receive.
   type: core
   library: "@powerboard/dev-router"
-  library_version: "0.3.0"
+  library_version: "0.3.1"
 sources:
   - shansmith01/wrangle-webhooks:skills/forwarding/forwarding.md
   - shansmith01/wrangle-webhooks:src/worker.ts
@@ -47,7 +47,7 @@ If a named route has active subscribers, it wins for that prefix. Otherwise the 
 
 ### Accept 202 only for webhook fan-out
 
-Fan-out runs in `waitUntil`. The public caller gets `202` `{ "accepted": true }` once subscribers are found. Subscriber status codes are not propagated for webhooks.
+Fan-out runs in `waitUntil`. The public caller gets `202` `{ "accepted": true }` once subscribers are found. That is not proof any replica handled the request. Confirm delivery in each subscriber’s logs. Subscriber status codes are not propagated for webhooks.
 
 ### Return the subscriber response for OAuth
 
@@ -69,9 +69,9 @@ Webhook fan-out assumes every subscriber can do authenticated follow-up. That is
 
 ### HIGH Expecting a subscriber status on webhook fan-out
 
-Wrong: treating a public `202` as proof the app returned `200`.
+Wrong: treating a public `202` as proof the app returned `200`, or as proof every replica received the webhook.
 
-Correct: webhook fan-out only accepts the public hop. Inspect the subscriber app for the real status. OAuth is the opposite: the public response **is** the subscriber response.
+Correct: webhook fan-out only accepts the public hop. Inspect **each** subscriber’s logs for the real status. OAuth is the opposite: the public response **is** the subscriber response.
 
 Source: `src/worker.ts` `handlePublic`
 

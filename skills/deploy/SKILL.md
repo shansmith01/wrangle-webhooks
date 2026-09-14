@@ -11,7 +11,7 @@ metadata:
   purpose: Guidance for deploying and operating the shared ingress Worker.
   type: lifecycle
   library: "@powerboard/dev-router"
-  library_version: "0.3.0"
+  library_version: "0.3.1"
 sources:
   - shansmith01/wrangle-webhooks:skills/deploy/deploy.md
   - shansmith01/wrangle-webhooks:wrangler.jsonc
@@ -35,7 +35,7 @@ npx wrangler secret put DEV_ROUTER_SECRET
 npx wrangler secret put DEV_ROUTER_DASHBOARD_PASSWORD
 ```
 
-Bind a hostname such as `dev-webhooks.example.com` in the Cloudflare dashboard. Management join routes accept the operator secret or a minted route credential. Subscriber bind/heartbeat/DELETE accept the operator secret or that connection’s token. Tunnel upgrades may use the `dev-router.v1.` WebSocket subprotocol. Remote environments must reach this origin over HTTPS and WSS. The Worker fetches public-target `https://` origins; reverse-tunnel subscribers use the client’s outbound WebSocket. Mint route credentials with `npx dev-router token --route <id>` and give orbs that value, not the operator secret.
+Bind a hostname such as `dev-webhooks.example.com` in the Cloudflare dashboard. Management join routes accept the operator secret or a minted route credential. Subscriber bind/heartbeat/DELETE accept the operator secret or that connection’s token. Tunnel upgrades may use the `dev-router.v1.` WebSocket subprotocol. Remote environments must reach this origin over HTTPS and WSS. The Worker fetches public-target `https://` origins; reverse-tunnel subscribers use the client’s outbound WebSocket. Mint route credentials with `npx dev-router token` (root) or `npx dev-router token --route <id>` (named) and give orbs that matching value, not the operator secret.
 
 ## Core Patterns
 
@@ -67,7 +67,7 @@ Wrong:
 { "vars": { "DEV_ROUTER_SECRET": "super-secret" } }
 ```
 
-Correct: `npx wrangler secret put DEV_ROUTER_SECRET` and `npx wrangler secret put DEV_ROUTER_DASHBOARD_PASSWORD` in production; `.dev.vars` locally (gitignored). Mint per-route client credentials with `npx dev-router token --route nomads`. Do not put the operator secret on every orb.
+Correct: `npx wrangler secret put DEV_ROUTER_SECRET` and `npx wrangler secret put DEV_ROUTER_DASHBOARD_PASSWORD` in production; `.dev.vars` locally (gitignored). Mint matching client credentials with `npx dev-router token` (root) or `npx dev-router token --route nomads`. Do not put the operator secret on every orb.
 
 Source: `skills/deploy/deploy.md`, `.gitignore`
 
@@ -89,4 +89,4 @@ Source: `src/worker.ts`, `src/auth.ts`, `src/credentials.ts`
 
 ## Completion
 
-`wrangler deploy` succeeds, `DEV_ROUTER_SECRET` and `DEV_ROUTER_DASHBOARD_PASSWORD` are set, and `GET https://<host>/dashboard` prompts for the dashboard password. Mint a route credential for each project (`npx dev-router token --route nomads`) and give that to clients. Load `connect` for subscriber registration in remote cloud environments.
+`wrangler deploy` succeeds, `DEV_ROUTER_SECRET` and `DEV_ROUTER_DASHBOARD_PASSWORD` are set, and `GET https://<host>/dashboard` prompts for the dashboard password. Mint a route credential for each connect style (`npx dev-router token` for root, `npx dev-router token --route nomads` for a named prefix) and give that to clients. Load `connect` for subscriber registration in remote cloud environments.

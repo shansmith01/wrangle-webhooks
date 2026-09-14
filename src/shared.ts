@@ -132,6 +132,10 @@ export function publicIngressUrl(routerUrl: string, routeId: string): string {
   return routeId === "" ? `${base}/*` : `${base}/${routeId}/*`;
 }
 
+export function forwardingDisplayUrl(targetBaseUrl: string): string {
+  return `${targetBaseUrl.replace(/\/+$/, "")}/*`;
+}
+
 export function joinTargetUrl(
   targetBaseUrl: string,
   remainingPath: string,

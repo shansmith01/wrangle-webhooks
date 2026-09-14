@@ -49,6 +49,7 @@ describe("DevRouterClient", () => {
     expect(connection.transport).toBe("public");
     expect(connection.publicUrl).toBe("https://dev-webhooks.example.com/my-web-app/*");
     expect(connection.environmentId).toBe("codespace-1");
+    expect(connection.connected).toBe(true);
     expect(fetchMock).toHaveBeenCalledTimes(1);
     const firstCall = fetchMock.mock.calls[0];
     expect(String(firstCall[0])).toBe(
@@ -59,6 +60,7 @@ describe("DevRouterClient", () => {
     expect(String(firstCall[1]?.body)).toContain("codespace-1");
 
     await connection.disconnect();
+    expect(connection.connected).toBe(false);
     expect(fetchMock).toHaveBeenCalledTimes(2);
     expect(String(fetchMock.mock.calls[1][0])).toContain("subscribers/sub_abc123");
     expect(fetchMock.mock.calls[1][1]?.method).toBe("DELETE");

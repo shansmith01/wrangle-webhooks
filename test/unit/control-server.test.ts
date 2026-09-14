@@ -12,6 +12,7 @@ function fakeConnection(): Connection {
     forwardToken: "ft_test",
     connectionToken: "ct_test",
     environmentId: "amp-thread-1",
+    connected: true,
     async disconnect() {
       return;
     },
@@ -45,6 +46,7 @@ describe("sidecar control server", () => {
       forwardToken: "ft_test",
       connectionToken: "ct_test",
       environmentId: "amp-thread-1",
+      connected: true,
       disconnect: async () => undefined,
       wrapOAuthState: async (inner) => `wrapped:${inner ?? ""}`,
       bindOAuthState: async (state) => {
@@ -59,6 +61,7 @@ describe("sidecar control server", () => {
     expect(await ready.json()).toMatchObject({
       ok: true,
       ready: true,
+      connected: true,
       subscriberId: "sub_abc",
       routeId: "nomads",
       environmentId: "amp-thread-1"
@@ -95,5 +98,25 @@ describe("sidecar control server", () => {
       headers: { Authorization: "Bearer s3cret" }
     });
     expect(allowed.status).toBe(200);
+  });
+
+  it("returns 503 until the live connection is up, even if a subscriber id is parked", async () => {
+    const connection = fakeConnection();
+    (connection as { connected: boolean }).connected = false;
+    const server = await startControlServer(connection, { port: 0 });
+    servers.push(server);
+
+    const down = await fetch(`${server.url}/ready`);
+    expect(down.status).toBe(503);
+    expect(await down.json()).toMatchObject({
+      ready: false,
+      connected: false,
+      subscriberId: "sub_abc"
+    });
+
+    (connection as { connected: boolean }).connected = true;
+    const up = await fetch(`${server.url}/ready`);
+    expect(up.status).toBe(200);
+    expect(await up.json()).toMatchObject({ ready: true, connected: true });
   });
 });

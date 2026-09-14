@@ -40,6 +40,7 @@ export interface Connection {
   forwardToken: string;
   connectionToken: string;
   environmentId?: string;
+  readonly connected: boolean;
   disconnect(): Promise<void>;
   wrapOAuthState(inner?: string): Promise<string>;
   bindOAuthState(state: string): Promise<void>;

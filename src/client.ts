@@ -86,6 +86,10 @@ class PublicConnection implements Connection {
   connectionToken = "";
   readonly environmentId?: string;
 
+  get connected(): boolean {
+    return !this.disconnected && this.subscriberId.length > 0;
+  }
+
   private readonly client: DevRouterClient;
   private readonly closed = new AbortController();
   private heartbeatTimer: ReturnType<typeof setTimeout> | undefined;

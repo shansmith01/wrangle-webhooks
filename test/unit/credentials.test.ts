@@ -15,6 +15,15 @@ describe("route credentials", () => {
     expect(nomads).toBe(await deriveRouteSecret("operator-secret", "nomads"));
   });
 
+  it("derives a distinct secret for the empty root route", async () => {
+    const root = await deriveRouteSecret("operator-secret", "");
+    const named = await deriveRouteSecret("operator-secret", "nomads");
+    expect(root).toMatch(/^rt_/);
+    expect(root).not.toBe(named);
+    expect(await matchJoinCredential(root, "operator-secret", "")).toBe("route");
+    expect(await matchJoinCredential(root, "operator-secret", "nomads")).toBeNull();
+  });
+
   it("accepts the operator secret or the matching route secret", async () => {
     const routeSecret = await deriveRouteSecret("operator-secret", "nomads");
     expect(await matchJoinCredential("operator-secret", "operator-secret", "nomads")).toBe(

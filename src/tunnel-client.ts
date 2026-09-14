@@ -46,6 +46,7 @@ export class TunnelConnection implements Connection {
   private lastPongAt = 0;
   private readonly closed = new AbortController();
   private disconnected = false;
+  private serving = false;
   private socket: WebSocket | undefined;
   private pingTimer: ReturnType<typeof setInterval> | undefined;
   private markReady: () => void = () => undefined;
@@ -94,11 +95,16 @@ export class TunnelConnection implements Connection {
     await this.ready;
   }
 
+  get connected(): boolean {
+    return this.serving && this.socket?.readyState === WebSocket.OPEN;
+  }
+
   async disconnect(): Promise<void> {
     if (this.disconnected) {
       return;
     }
     this.disconnected = true;
+    this.serving = false;
     this.clearPing();
     process.off("SIGINT", this.onSignal);
     process.off("SIGTERM", this.onSignal);
@@ -176,11 +182,13 @@ export class TunnelConnection implements Connection {
     this.socket = socket;
     await waitForOpen(socket, this.closed.signal);
     await this.waitForHello(socket);
+    this.serving = true;
     this.markReady();
     this.startPing(socket);
     try {
       await this.serve(socket);
     } finally {
+      this.serving = false;
       this.clearPing();
       if (this.socket === socket) {
         this.socket = undefined;

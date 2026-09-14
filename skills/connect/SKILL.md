@@ -15,7 +15,7 @@ metadata:
   purpose: Guidance for registering a cloud environment as a router subscriber using the CLI or DevRouterClient.
   type: core
   library: "@powerboard/dev-router"
-  library_version: "0.3.0"
+  library_version: "0.3.1"
 sources:
   - shansmith01/wrangle-webhooks:skills/connect/connect.md
   - shansmith01/wrangle-webhooks:src/cli.ts
@@ -36,8 +36,8 @@ Register the current environment with the shared ingress Worker. Keep the client
 ```bash
 npm install -D @powerboard/dev-router
 export DEV_ROUTER_URL=https://dev-webhooks.example.com
-export DEV_ROUTER_SECRET=<route credential>
-npx dev-router connect --route nomads --local-url http://127.0.0.1:3000 --environment-id "$AMP_THREAD_ID"
+export DEV_ROUTER_SECRET=<minted credential>
+npx dev-router connect --local-url http://127.0.0.1:3000 --environment-id "$AMP_THREAD_ID"
 ```
 
 ```json
@@ -72,10 +72,30 @@ One-shot: `npx --yes @powerboard/dev-router connect --local-url http://127.0.0.1
 ### Reverse tunnel to a local HTTP server
 
 ```bash
-npx dev-router connect --route nomads --local-url http://127.0.0.1:3000 --environment-id "$AMP_THREAD_ID"
+npx dev-router connect --local-url http://127.0.0.1:3000 --environment-id "$AMP_THREAD_ID"
 ```
 
-The sidecar opens an outbound WebSocket, forwards each request to `localUrl`, and returns status/headers/body. Amp, Codespaces, Cursor, CI, containers, and private VMs use this same local URL interface. Pass a stable `--environment-id` so reconnects keep the subscriber and pending OAuth bindings.
+The sidecar opens an outbound WebSocket, forwards each request to `localUrl`, and returns status/headers/body. Amp, Codespaces, Cursor, CI, containers, and private VMs use this same local URL interface. Pass a stable `--environment-id` so reconnects keep the subscriber and pending OAuth bindings. Omit `--route` for root URLs (`https://dev-webhooks.example.com/oauth/callback`); pass `--route nomads` when the project needs a prefix.
+
+### Amp `.amp/services.yaml` (root route + direct `/ready`)
+
+```yaml
+services:
+  app:
+    command: npm run dev -- --host 0.0.0.0 --port "$PORT"
+    port: 3000
+    portal: true
+  router:
+    command: >-
+      npx dev-router connect
+      --local-url http://127.0.0.1:3000
+      --environment-id "$AMP_THREAD_ID"
+      --control-port "$PORT"
+    port: 8790
+    health: /ready
+```
+
+Amp injects `PORT` and `AMP_THREAD_ID`. `health: /ready` probes the sidecar control server (503 until the WebSocket is live). Mint `npx dev-router token` for this root connect; mint `npx dev-router token --route nomads` only when the command also has `--route nomads`.
 
 ### Bind OAuth state from the app process
 
@@ -87,7 +107,7 @@ POST http://127.0.0.1:8790/oauth-states
 {"state":"<app-generated-state>"}
 ```
 
-Required when another replica is already subscribed to the same route. A lone subscriber is routed automatically.
+Required when another replica is already subscribed to the same route. A lone subscriber is routed automatically. `GET /ready` returns 503 until the tunnel WebSocket is connected, not merely because a subscriber id still exists.
 
 ### Optional public-target transport
 
@@ -161,7 +181,7 @@ Source: `skills/connect/connect.md`
 
 Wrong: setting `DEV_ROUTER_SECRET` on replicas to the Worker operator secret.
 
-Correct: `npx dev-router token --route nomads` and give orbs that route credential. The operator secret can join any route and act as any subscriber.
+Correct: `npx dev-router token` (root) or `npx dev-router token --route nomads` (named). Give orbs that matching credential. The operator secret can join any route and act as any subscriber.
 
 Source: `src/credentials.ts`, `skills/connect/connect.md`
 
@@ -173,9 +193,17 @@ Wrong:
 await client.connect({ routeId: "dashboard", localUrl: "http://127.0.0.1:3000" });
 ```
 
-Correct: omit `--route` for root ingress, or pick an unreserved id such as `nomads`. `_router` and `dashboard` are reserved.
+Correct: omit `--route` for root ingress (mint with `npx dev-router token`), or pick an unreserved id such as `nomads` (mint with `npx dev-router token --route nomads`). `_router` and `dashboard` are reserved.
 
 Source: `src/shared.ts`
+
+### HIGH Treating GET /ready as connected because a subscriber id exists
+
+Wrong: treating `/ready` as 200 during reconnect just because `--environment-id` parked a subscriber id.
+
+Correct: `/ready` returns 503 until the live WebSocket is connected. Amp `health: /ready` should fail while the sidecar is backing off.
+
+Source: `src/control-server.ts`, `src/tunnel-client.ts`
 
 ### HIGH Declaring a new environment ready without OAuth
 

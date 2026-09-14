@@ -28,15 +28,16 @@ npx --yes @powerboard/dev-router connect --route nomads --local-url http://127.0
 
 If `DEV_ROUTER_URL` or `DEV_ROUTER_SECRET` is missing, the CLI prints an error and exits.
 
-Mint a route credential from the operator secret so each project cannot join other routes:
+Mint a join credential from the operator secret so each project cannot join other routes. Match the connect command:
 
 ```bash
-npx dev-router token --route nomads
+npx dev-router token                 # root-scoped; omit --route on connect
+npx dev-router token --route nomads  # named route only
 ```
 
-Give that value to orbs as `DEV_ROUTER_SECRET`. Keep the Worker operator secret off replica environments.
+Give that value to orbs as `DEV_ROUTER_SECRET`. Keep the Worker operator secret off replica environments. A root-scoped credential cannot join `nomads`; a nomads credential cannot join root.
 
-`--route` / `DEV_ROUTER_ROUTE` is optional. Omit it to publish at the router root (`https://dev-webhooks.example.com/*`).
+`--route` / `DEV_ROUTER_ROUTE` is optional. Omitting it publishes at the router root with **no project prefix**: providers call `https://dev-webhooks.example.com/oauth/callback`, not `https://dev-webhooks.example.com/nomads/oauth/callback`.
 
 Treat the client as a sidecar, not in-process middleware:
 
@@ -60,13 +61,37 @@ The same `--local-url` interface is used on Amp, Codespaces, Cursor, CI, contain
 
 The sidecar also listens on loopback (`http://127.0.0.1:8790` by default):
 
-- `GET /ready` — Amp / process-manager readiness (`subscriberId`, `publicUrl`, `environmentId`)
+- `GET /ready` — Amp / process-manager readiness. Returns **503 until the live WebSocket is connected**. A parked `--environment-id` subscriber is not ready during reconnect.
 - `POST /oauth-states` `{ "state": "..." }` — bind this replica’s OAuth `state`
 - `POST /oauth-wrap` `{ "inner": "..." }` — wrap a nonce without importing router crypto
 
 The app process should call that control server. Do not run `DevRouterClient` inside the API. `--control-socket` uses a Unix socket. `--no-control` disables it.
 
 `--local-url` and `--target` are mutually exclusive.
+
+## Amp orb example
+
+In the **app** repository, commit `.amp/services.yaml`. Amp injects `PORT` and `AMP_THREAD_ID`; do not set them in `env`. Put `DEV_ROUTER_URL` and the minted credential in Amp project secrets.
+
+Root routing (no `--route`) plus a **direct** `/ready` check on the sidecar control port:
+
+```yaml
+services:
+  app:
+    command: npm run dev -- --host 0.0.0.0 --port "$PORT"
+    port: 3000
+    portal: true
+  router:
+    command: >-
+      npx dev-router connect
+      --local-url http://127.0.0.1:3000
+      --environment-id "$AMP_THREAD_ID"
+      --control-port "$PORT"
+    port: 8790
+    health: /ready
+```
+
+`health: /ready` is a GET to the **router** service (`127.0.0.1:8790/ready`), not the app. It stays 503 until the tunnel WebSocket is up. The app binds OAuth state with `POST http://127.0.0.1:8790/oauth-states`. Mint the matching root credential with `npx dev-router token`. For a named prefix, add `--route <id>` to `command` and mint `npx dev-router token --route <id>`.
 
 ## Replica mode: OAuth this environment before webhooks matter
 

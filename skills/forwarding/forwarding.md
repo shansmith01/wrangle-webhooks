@@ -2,10 +2,12 @@
 
 Give external providers the **router** URL (`Public:` from `dev-router connect`). The Worker then delivers to each subscriber over reverse tunnel or by `fetch()`ing a public `https://` target.
 
-`routeId` is an optional public path prefix, not a private identifier:
+`routeId` is an optional public path prefix, not a private identifier. Omitting `--route` produces URLs **without** a project prefix:
 
 - omitted / empty → `https://dev-webhooks.example.com/oauth/callback`
 - `my-web-app` → `https://dev-webhooks.example.com/my-web-app/oauth/callback`
+
+Mint `npx dev-router token` for root connect, or `npx dev-router token --route my-web-app` for a named prefix. Do not mix them.
 
 If a named route has active subscribers, it wins for that prefix. Otherwise an empty-route subscriber receives the full path.
 
@@ -25,7 +27,7 @@ The original method, raw body, query string, and relevant headers are preserved.
 
 ## Webhooks vs OAuth
 
-Webhooks use **fan-out**. Every active subscriber receives a copy. The public caller gets `202 Accepted` `{ "accepted": true }` as soon as fan-out is accepted. Subscriber status codes are not propagated.
+Webhooks use **fan-out**. Every active subscriber receives a copy. The public caller gets `202 Accepted` `{ "accepted": true }` as soon as fan-out is accepted. That is **not** delivery proof: subscriber status codes are not propagated. Confirm the request in **each** subscriber’s logs before treating a fan-out test as successful.
 
 OAuth callbacks use **correlated single-target routing** and **return the subscriber response** (status, headers, body). That is required so authorization-code exchanges and redirects work. One `code` must go only to the subscriber that created its `state`.
 

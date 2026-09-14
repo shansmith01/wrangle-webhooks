@@ -1,10 +1,11 @@
 # @powerboard/dev-router — Skill Spec
 
-Shared Cloudflare ingress for ephemeral cloud development environments. One Worker plus Durable Objects; an npm sidecar reverse-tunnels local HTTP servers (or optionally registers a public HTTPS target). Skills target library version 0.3.0.
+Shared Cloudflare ingress for ephemeral cloud development environments. One Worker plus Durable Objects; an npm sidecar reverse-tunnels local HTTP servers (or optionally registers a public HTTPS target). Skills target library version 0.3.1.
 
 ## Coverage and batch history
 
-- **2026-09-14 / 0.3.0** — Loopback control server, stable environment identity, route-scoped join credentials, tunnel pong deadline.
+- **2026-09-14 / 0.3.1** — Slim published deps (`ws` only), live WebSocket `/ready`, Amp services.yaml example, root vs named credentials, forwarding display URL.
+- **2026-09-14 / 0.3.0** — Loopback control server (live WebSocket `/ready`), stable environment identity, root- and route-scoped join credentials, Amp services.yaml example, tunnel pong deadline.
 - **2026-09-14 / 0.2.0** — Reverse-tunnel transport, OAuth subscriber responses, correlated `state` routing, replica-mode “OAuth this environment after connect” prompt, per-connection forward tokens, immediate tunnel disconnect.
 - **2026-09-14 / 0.1.0** — Initial batch for connect, deploy, and forwarding.
 
@@ -20,13 +21,13 @@ Shared Cloudflare ingress for ephemeral cloud development environments. One Work
 
 | Skill | Type | Domain | What it covers | Failure modes |
 | --- | --- | --- | --- | --- |
-| connect | core | client-connection | CLI, DevRouterClient, reverse tunnel, control server, replica-mode OAuth prompt | 6 |
+| connect | core | client-connection | CLI, DevRouterClient, reverse tunnel, control server, replica-mode OAuth prompt | 7 |
 | deploy | lifecycle | worker-operations | wrangler deploy, secrets, types, dashboard, WSS | 3 |
 | forwarding | core | ingress-contract | webhook 202, OAuth proxy, replica credentials, headers, fan-out vs correlation | 6 |
 
 ## Failure Mode Inventory
 
-### connect (6 failure modes)
+### connect (7 failure modes)
 
 | # | Mistake | Priority | Source | Cross-skill? |
 | --- | --- | --- | --- | --- |
@@ -36,6 +37,7 @@ Shared Cloudflare ingress for ephemeral cloud development environments. One Work
 | 4 | Reserved route prefix | MEDIUM | src/shared.ts | — |
 | 5 | Declare a new environment ready without OAuth | HIGH | skills/connect/connect.md | forwarding |
 | 6 | Give every orb the operator secret | HIGH | src/credentials.ts | deploy |
+| 7 | Treat /ready as connected from a parked subscriber id | HIGH | src/control-server.ts | — |
 
 ### deploy (3 failure modes)
 
@@ -73,7 +75,7 @@ Shared Cloudflare ingress for ephemeral cloud development environments. One Work
 
 ## Remaining Gaps
 
-None for 0.3.0 reverse-tunnel, OAuth correlation, control server, environment identity, or scoped join credentials.
+None for 0.3.1 reverse-tunnel, live `/ready`, OAuth correlation, control server, environment identity, Amp example, or scoped join credentials.
 
 ## Recommended Skill File Structure
 

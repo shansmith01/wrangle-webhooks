@@ -4,6 +4,7 @@ import {
   isAllowedRouteId,
   isValidRouteId,
   managementSubscriberPath,
+  forwardingDisplayUrl,
   publicIngressUrl,
   joinTargetUrl,
   remainingPathFromPublicUrl,
@@ -120,6 +121,13 @@ describe("publicIngressUrl", () => {
     expect(publicIngressUrl("https://dev-webhooks.example.com", "project-a")).toBe(
       "https://dev-webhooks.example.com/project-a/*"
     );
+  });
+});
+
+describe("forwardingDisplayUrl", () => {
+  it("does not print a double slash when the target already has a trailing slash", () => {
+    expect(forwardingDisplayUrl("http://127.0.0.1:3000/")).toBe("http://127.0.0.1:3000/*");
+    expect(forwardingDisplayUrl("http://127.0.0.1:3000")).toBe("http://127.0.0.1:3000/*");
   });
 });
 

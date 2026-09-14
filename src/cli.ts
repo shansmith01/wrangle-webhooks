@@ -3,7 +3,7 @@ import { resolveCliCommand } from "./cli-command";
 import { DevRouterClient, deriveRouteSecret, startControlServer } from "./client";
 import { CONTROL_DEFAULT_PORT } from "./control-server";
 import { detectPublicDevUrl, resolveDevPort } from "./detect-url";
-import { isAllowedEnvironmentId, isAllowedRouteId } from "./shared";
+import { forwardingDisplayUrl, isAllowedEnvironmentId, isAllowedRouteId } from "./shared";
 import { waitForShutdownSignal } from "./wait-for-shutdown";
 
 async function main(): Promise<void> {
@@ -117,7 +117,7 @@ async function main(): Promise<void> {
   console.log(connection.publicUrl);
   console.log("");
   console.log("Forwarding to:");
-  console.log(`${connection.targetBaseUrl}/*`);
+  console.log(forwardingDisplayUrl(connection.targetBaseUrl));
   if (connection.transport === "tunnel") {
     console.log("(local reverse tunnel; the Worker cannot see this URL)");
   } else if (detected) {
@@ -164,9 +164,11 @@ async function printRouteToken(secret: string | undefined, routeId: string): Pro
 
 function printUsage(): void {
   console.log(`Usage:
+  npx dev-router connect --local-url http://127.0.0.1:3000
   npx dev-router connect --route nomads --local-url http://127.0.0.1:3000
   npx dev-router connect --route my-web-app --port 3000
   npx dev-router connect --target https://abc123.cloud-dev.example
+  npx dev-router token
   npx dev-router token --route nomads
 
 Reverse tunnel (--local-url) is the default for private cloud environments
@@ -176,8 +178,12 @@ opens an outbound WebSocket and forwards requests to the local HTTP server.
 Public-target (--target / PUBLIC_DEV_URL) remains available when the
 environment already has a public https:// origin the Worker can fetch.
 
-route is optional. When omitted, traffic is accepted at the router root
+--route is optional. Omitting it publishes at the router root
 (https://dev-webhooks.example.com/*) with no project prefix.
+
+Mint credentials from the operator secret. Match the connect command:
+  npx dev-router token                 root-scoped (omit --route on connect)
+  npx dev-router token --route nomads  named-route only
 
 Environment:
   DEV_ROUTER_URL              Shared router base URL

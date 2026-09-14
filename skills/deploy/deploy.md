@@ -13,7 +13,7 @@ npx wrangler secret put DEV_ROUTER_SECRET
 npx wrangler secret put DEV_ROUTER_DASHBOARD_PASSWORD
 ```
 
-Management endpoints under `/_router/*` require a bearer credential. Store the **operator** secret as the Worker secret `DEV_ROUTER_SECRET`. Join (register / tunnel) also accepts a **route** credential derived from that operator secret. Mint one locally with `npx dev-router token --route nomads` (or `GET /_router/routes/nomads/credential` as the operator) and give orbs only that value. Subscriber heartbeat, OAuth bind, and DELETE require the operator secret or the per-connection token returned at connect — a route credential cannot bind or remove another replica. Tunnel upgrades may send the join credential as a `dev-router.v1.` WebSocket subprotocol. Do not commit `.dev.vars`.
+Management endpoints under `/_router/*` require a bearer credential. Store the **operator** secret as the Worker secret `DEV_ROUTER_SECRET`. Join (register / tunnel) also accepts a **route** credential derived from that operator secret. Mint a root-scoped credential with `npx dev-router token` (or `GET /_router/credential`) when clients omit `--route`. Mint a named-route credential with `npx dev-router token --route nomads` (or `GET /_router/routes/nomads/credential`). Give orbs only the matching value. Subscriber heartbeat, OAuth bind, and DELETE require the operator secret or the per-connection token returned at connect — a route credential cannot bind or remove another replica. Tunnel upgrades may send the join credential as a `dev-router.v1.` WebSocket subprotocol. Do not commit `.dev.vars`.
 
 `wrangler.jsonc` names the Worker `dev-router`, enables `nodejs_compat` and observability, and binds two SQLite Durable Objects:
 
