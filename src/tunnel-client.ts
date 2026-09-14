@@ -9,6 +9,7 @@ import { wrapOAuthState } from "./oauth-state";
 import {
   DELIVERY_TIMEOUT_MS,
   DEREGISTER_TIMEOUT_MS,
+  ROUTER_HEADER_CONNECTION,
   joinTargetUrl,
   managementSubscriberPath,
   publicIngressUrl
@@ -200,7 +201,11 @@ export class TunnelConnection implements Connection {
     const url = toWebSocketUrl(
       `${this.routerUrl}${managementTunnelPath(this.routeId, this.environmentId)}`
     );
-    const socket = new WebSocket(url, [tunnelSubprotocol(this.secret)]);
+    const headers: Record<string, string> = {};
+    if (this.connectionToken) {
+      headers[ROUTER_HEADER_CONNECTION] = this.connectionToken;
+    }
+    const socket = new WebSocket(url, [tunnelSubprotocol(this.secret)], { headers });
     this.socket = socket;
     socket.on("unexpected-response", (_request, response: IncomingMessage) => {
       this.noteFailure(undefined, response.statusCode);

@@ -9,6 +9,7 @@ export const ROUTER_HEADER_ROUTE = "X-Dev-Router-Route";
 export const ROUTER_HEADER_SUBSCRIBER = "X-Dev-Router-Subscriber";
 export const ROUTER_HEADER_REQUEST_ID = "X-Dev-Router-Request-Id";
 export const ROUTER_HEADER_TOKEN = "X-Dev-Router-Token";
+export const ROUTER_HEADER_CONNECTION = "X-Dev-Router-Connection";
 
 const HOP_BY_HOP_HEADERS = new Set([
   "connection",

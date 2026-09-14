@@ -1,6 +1,6 @@
 {
   "name": "@powerboard/dev-router",
-  "version": "0.3.3",
+  "version": "0.3.4",
   "description": "Sidecar client for a shared Cloudflare ingress Worker: reverse tunnels and stable public URLs for ephemeral cloud development environments",
   "type": "module",
   "main": "./dist/client.js",

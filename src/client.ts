@@ -232,10 +232,11 @@ class PublicConnection implements Connection {
       response = await this.request(managementSubscriberPath(this.routeId), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          targetBaseUrl: this.targetBaseUrl,
-          ...(this.environmentId ? { environmentId: this.environmentId } : {})
-        })
+      body: JSON.stringify({
+        targetBaseUrl: this.targetBaseUrl,
+        ...(this.environmentId ? { environmentId: this.environmentId } : {}),
+        ...(this.connectionToken ? { connectionToken: this.connectionToken } : {})
+      })
       });
     } catch (error) {
       this.connectionState = nextConnectionFailure(this.connectionState, error);

@@ -1,4 +1,5 @@
 import { deriveRouteSecret } from "../../src/credentials";
+import { ROUTER_HEADER_CONNECTION } from "../../src/shared";
 import {
   createExecutionContext,
   env,
@@ -559,11 +560,50 @@ describe("stable environment identity", () => {
     await waitOnExecutionContext(ctx);
     second.ws.close(1000, "done");
   });
+
+  it("rejects a second join that tries to steal a live environment id", async () => {
+    const first = await openTunnel("env-live", "amp-thread-live");
+    const denied = await fetchWorker(
+      "https://dev-webhooks.example.com/_router/routes/env-live/tunnel?environmentId=amp-thread-live",
+      { headers: authHeaders({ Upgrade: "websocket" }) }
+    );
+    expect(denied.status).toBe(409);
+    expect(await denied.json()).toEqual({ error: "environment_in_use" });
+    first.ws.close(1000, "done");
+  });
+
+  it("replaces a live tunnel when the connection token matches", async () => {
+    const first = await openTunnel("env-token", "amp-thread-token");
+    const second = await openTunnel(
+      "env-token",
+      "amp-thread-token",
+      first.hello.connectionToken
+    );
+    expect(second.hello.subscriberId).toBe(first.hello.subscriberId);
+    expect(second.hello.connectionToken).not.toBe(first.hello.connectionToken);
+    second.ws.close(1000, "done");
+  });
+
+  it("rejects public re-register of a live environment id without the connection token", async () => {
+    await register("env-public", "https://dev-env-a.example", "amp-thread-public");
+    const path = "https://dev-webhooks.example.com/_router/routes/env-public/subscribers";
+    const denied = await fetchWorker(path, {
+      method: "POST",
+      headers: authHeaders({ "Content-Type": "application/json" }),
+      body: JSON.stringify({
+        targetBaseUrl: "https://dev-env-b.example",
+        environmentId: "amp-thread-public"
+      })
+    });
+    expect(denied.status).toBe(409);
+    expect(await denied.json()).toEqual({ error: "environment_in_use" });
+  });
 });
 
 async function openTunnel(
   routeId: string,
-  environmentId?: string
+  environmentId?: string,
+  connectionToken?: string
 ): Promise<{
   ws: WebSocket;
   hello: { subscriberId: string; forwardToken: string; connectionToken: string; environmentId?: string };
@@ -572,9 +612,13 @@ async function openTunnel(
   const path = environmentId
     ? `https://dev-webhooks.example.com/_router/routes/${routeId}/tunnel?environmentId=${encodeURIComponent(environmentId)}`
     : `https://dev-webhooks.example.com/_router/routes/${routeId}/tunnel`;
+  const headers = authHeaders({ Upgrade: "websocket" });
+  if (connectionToken) {
+    headers.set(ROUTER_HEADER_CONNECTION, connectionToken);
+  }
   const response = await worker.fetch(
     new Request(path, {
-      headers: authHeaders({ Upgrade: "websocket" })
+      headers
     }) as Request<unknown, IncomingRequestCfProperties>,
     env,
     ctx

@@ -7,7 +7,7 @@ import {
   verifyDashboardSession
 } from "../../src/auth";
 
-function dashboardRequest(headers?: HeadersInit): Request {
+function dashboardRequest(headers?: { [name: string]: string }): Request {
   return new Request("https://dev-webhooks.example.com/dashboard", { headers });
 }
 

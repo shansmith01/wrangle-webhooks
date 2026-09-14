@@ -14,6 +14,7 @@ import {
 import { OAUTH_STATE_MAX_LENGTH, OAUTH_STATE_TTL_MS, unwrapOAuthStateForRoute } from "./oauth-state";
 import {
   DELIVERY_TIMEOUT_MS,
+  ROUTER_HEADER_CONNECTION,
   SUBSCRIBER_TTL_MS,
   TUNNEL_STALE_MS,
   durableObjectNameForIndex,
@@ -164,8 +165,12 @@ export class RouteDurableObject extends DurableObject<Env> {
     const attached = await this.reclaimOrCreate({
       environmentId,
       transport: "tunnel",
-      targetBaseUrl: ""
+      targetBaseUrl: "",
+      connectionToken: request.headers.get(ROUTER_HEADER_CONNECTION)
     });
+    if (!attached.ok) {
+      return Response.json({ error: attached.error }, { status: 409 });
+    }
     await this.syncIndex();
 
     const pair = new WebSocketPair();
@@ -237,13 +242,17 @@ export class RouteDurableObject extends DurableObject<Env> {
   async register(
     targetBaseUrl: string,
     routeId: string,
-    environmentId?: string | null
-  ): Promise<{
-    subscriberId: string;
-    expiresIn: number;
-    forwardToken: string;
-    connectionToken: string;
-  }> {
+    environmentId?: string | null,
+    connectionToken?: string | null
+  ): Promise<
+    | {
+        subscriberId: string;
+        expiresIn: number;
+        forwardToken: string;
+        connectionToken: string;
+      }
+    | { error: "environment_in_use" }
+  > {
     const normalized = validateTargetBaseUrl(targetBaseUrl);
     const now = Date.now();
     this.purgeExpired(now);
@@ -252,8 +261,12 @@ export class RouteDurableObject extends DurableObject<Env> {
     const attached = await this.reclaimOrCreate({
       environmentId: environmentId || null,
       transport: "public",
-      targetBaseUrl: normalized
+      targetBaseUrl: normalized,
+      connectionToken: connectionToken ?? null
     });
+    if (!attached.ok) {
+      return { error: attached.error };
+    }
     await this.scheduleCleanup(now);
     await this.syncIndex();
     return {
@@ -569,11 +582,16 @@ export class RouteDurableObject extends DurableObject<Env> {
     environmentId: string | null;
     transport: "public" | "tunnel";
     targetBaseUrl: string;
-  }): Promise<{
-    subscriberId: string;
-    forwardToken: string;
-    connectionToken: string;
-  }> {
+    connectionToken?: string | null;
+  }): Promise<
+    | {
+        ok: true;
+        subscriberId: string;
+        forwardToken: string;
+        connectionToken: string;
+      }
+    | { ok: false; error: "environment_in_use" }
+  > {
     const now = Date.now();
     const existing = options.environmentId
       ? this.lookupSubscriberByEnvironment(options.environmentId)
@@ -583,6 +601,12 @@ export class RouteDurableObject extends DurableObject<Env> {
     const connectionTokenHash = await hashConnectionToken(connectionToken);
 
     if (existing) {
+      if (this.subscriberIsLive(existing)) {
+        const proof = options.connectionToken ?? "";
+        if (!(await connectionTokenMatches(proof, existing.connection_token_hash))) {
+          return { ok: false, error: "environment_in_use" };
+        }
+      }
       this.closeSockets(existing.id);
       this.failPendingForSubscriber(existing.id, new Error("subscriber_replaced"));
       const forwardToken = this.ensureForwardToken(existing);
@@ -600,6 +624,7 @@ export class RouteDurableObject extends DurableObject<Env> {
         existing.id
       );
       return {
+        ok: true,
         subscriberId: existing.id,
         forwardToken,
         connectionToken
@@ -622,7 +647,14 @@ export class RouteDurableObject extends DurableObject<Env> {
       connectionTokenHash,
       options.environmentId
     );
-    return { subscriberId, forwardToken, connectionToken };
+    return { ok: true, subscriberId, forwardToken, connectionToken };
+  }
+
+  private subscriberIsLive(row: SubscriberRow): boolean {
+    if (row.transport === "tunnel") {
+      return this.ctx.getWebSockets(row.id).length > 0;
+    }
+    return true;
   }
 
   private lookupSubscriberByEnvironment(environmentId: string): SubscriberRow | undefined {

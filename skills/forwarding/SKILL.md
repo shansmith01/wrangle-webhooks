@@ -11,7 +11,7 @@ metadata:
   purpose: Guidance for the public ingress path and what subscribers actually receive.
   type: core
   library: "@powerboard/dev-router"
-  library_version: "0.3.3"
+  library_version: "0.3.4"
 sources:
   - shansmith01/wrangle-webhooks:skills/forwarding/forwarding.md
   - shansmith01/wrangle-webhooks:src/worker.ts
@@ -59,7 +59,7 @@ Hop-by-hop headers are dropped, including `Authorization` and `Cookie`. OAuth re
 
 ### Timeouts and isolation
 
-Each delivery uses a 10 second timeout and `redirect: "manual"`. `Promise.allSettled` means one failed webhook subscriber does not cancel the others. Anonymous tunnel sockets are removed as soon as they disconnect. Environment-identified tunnels park for five minutes so OAuth bindings survive a reconnect.
+Each delivery uses a 10 second timeout and `redirect: "manual"`. `Promise.allSettled` means one failed webhook subscriber does not cancel the others. Anonymous tunnel sockets are removed as soon as they disconnect. Environment-identified tunnels park for five minutes so OAuth bindings survive a reconnect. A live environment id cannot be taken over without that sidecar’s connection token.
 
 ### Replica mode
 

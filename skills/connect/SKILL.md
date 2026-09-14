@@ -16,7 +16,7 @@ metadata:
   purpose: Guidance for registering a cloud environment as a router subscriber using the CLI or DevRouterClient.
   type: core
   library: "@powerboard/dev-router"
-  library_version: "0.3.3"
+  library_version: "0.3.4"
 sources:
   - shansmith01/wrangle-webhooks:skills/connect/connect.md
   - shansmith01/wrangle-webhooks:src/cli.ts
@@ -77,7 +77,7 @@ One-shot: `npx --yes @powerboard/dev-router connect --local-url http://127.0.0.1
 npx dev-router connect --local-url http://127.0.0.1:3000 --environment-id "$AMP_THREAD_ID"
 ```
 
-The sidecar opens an outbound WebSocket, forwards each request to `localUrl`, and returns status/headers/body. Amp, Codespaces, Cursor, CI, containers, and private VMs use this same local URL interface. Pass a stable `--environment-id` so reconnects keep the subscriber and pending OAuth bindings. Omit `--route` for root URLs (`https://dev-webhooks.example.com/oauth/callback`); pass `--route nomads` when the project needs a prefix.
+The sidecar opens an outbound WebSocket, forwards each request to `localUrl`, and returns status/headers/body. Amp, Codespaces, Cursor, CI, containers, and private VMs use this same local URL interface. Pass a stable `--environment-id` so reconnects keep the subscriber and pending OAuth bindings. A parked subscriber (socket already closed) can be reclaimed with the join credential and the same id. A live socket is only replaced when that sidecar sends its connection token (`X-Dev-Router-Connection`). Omit `--route` for root URLs (`https://dev-webhooks.example.com/oauth/callback`); pass `--route nomads` when the project needs a prefix.
 
 ### Amp `.amp/services.yaml` (root route + direct `/ready`)
 
@@ -284,6 +284,14 @@ Wrong: `--environment-id "local-$$"` or any per-process id.
 Correct: `local-<sanitized-hostname>-<checkout-path-hash>`. PIDs change after restart and park stale subscribers. Max 128 characters; only `A-Za-z0-9._~:@+-`.
 
 Source: `src/shared.ts`
+
+### HIGH Reusing another replica’s --environment-id to take over its socket
+
+Wrong: connecting with a sibling orb’s `AMP_THREAD_ID` while that replica is still live.
+
+Correct: each environment uses its own id. A live subscriber returns `409` `environment_in_use` unless the same sidecar presents `X-Dev-Router-Connection`. After the socket closes, the parked id can be reclaimed so OAuth bindings survive a reconnect.
+
+Source: `src/durable-object.ts`, `src/tunnel-client.ts`
 
 ### HIGH Sourcing .env in the supervisor
 

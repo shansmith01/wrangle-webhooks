@@ -57,7 +57,7 @@ Run the sidecar **inside** the environment that serves the app. Bind the app to 
 npx dev-router connect --route nomads --local-url http://127.0.0.1:3000
 ```
 
-The same `--local-url` interface is used on Amp, Codespaces, Cursor, CI, containers, and private VMs. The Worker multiplexes public HTTP over the WebSocket. The client heartbeats with WebSocket `ping`/`pong`, reconnects with backoff, and closes the socket if a pong is missing for 75 seconds. SIGINT/SIGTERM closes the socket so anonymous subscribers are removed immediately. Pass `--environment-id` so reconnects reuse the same subscriber and keep pending OAuth bindings for five minutes.
+The same `--local-url` interface is used on Amp, Codespaces, Cursor, CI, containers, and private VMs. The Worker multiplexes public HTTP over the WebSocket. The client heartbeats with WebSocket `ping`/`pong`, reconnects with backoff, and closes the socket if a pong is missing for 75 seconds. SIGINT/SIGTERM closes the socket so anonymous subscribers are removed immediately. Pass `--environment-id` so reconnects reuse the same subscriber and keep pending OAuth bindings for five minutes. A live environment id cannot be stolen by another replica; reclaim requires that sidecar’s connection token, or a parked socket after disconnect.
 
 The sidecar also listens on loopback (`http://127.0.0.1:8790` by default) **as soon as the process starts**, before the tunnel WebSocket is up:
 

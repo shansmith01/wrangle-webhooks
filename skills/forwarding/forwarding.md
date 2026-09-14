@@ -61,7 +61,7 @@ Hop-by-hop headers (`connection`, `keep-alive`, `host`, `content-length`, and si
 
 `_router` and `dashboard` are reserved path prefixes and are not valid `routeId` values.
 
-Disconnected reverse-tunnel subscribers without an environment id are removed immediately when the WebSocket closes. With `--environment-id`, the subscriber parks for five minutes so pending OAuth bindings survive a reconnect. The Worker expires tunnels that miss pings.
+Disconnected reverse-tunnel subscribers without an environment id are removed immediately when the WebSocket closes. With `--environment-id`, the subscriber parks for five minutes so pending OAuth bindings survive a reconnect. A second replica cannot take over a live environment id; that requires the current connection token. The Worker expires tunnels that miss pings.
 
 ## Replica mode
 

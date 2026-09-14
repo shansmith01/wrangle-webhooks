@@ -323,8 +323,19 @@ async function registerSubscriber(
     return Response.json({ error: "invalid_environment_id" }, { status: 400 });
   }
 
+  const proofToken =
+    payload &&
+    typeof payload === "object" &&
+    "connectionToken" in payload &&
+    typeof payload.connectionToken === "string"
+      ? payload.connectionToken
+      : null;
+
   const stub = env.ROUTE.getByName(durableObjectNameForRoute(routeId));
-  const result = await stub.register(targetBaseUrl, routeId, environmentId ?? null);
+  const result = await stub.register(targetBaseUrl, routeId, environmentId ?? null, proofToken);
+  if ("error" in result) {
+    return Response.json({ error: result.error }, { status: 409 });
+  }
   await indexStub(env).addRoute(routeId);
   return Response.json({
     subscriberId: result.subscriberId,
@@ -414,7 +425,7 @@ async function handleDashboard(
   }
 
   if (pathname === "/dashboard.json") {
-    return Response.redirect(new URL("/dashboard/status", request.url), 308);
+    return Response.redirect(new URL("/dashboard/status", request.url).toString(), 308);
   }
 
   if (pathname === "/dashboard/login" && request.method === "POST") {
