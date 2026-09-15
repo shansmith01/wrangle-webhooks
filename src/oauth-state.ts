@@ -17,23 +17,27 @@ export class OAuthStateError extends Error {
   }
 }
 
+export function isOAuthCallbackPath(remainingPath: string): boolean {
+  const path = remainingPath.replace(/\/+$/, "") || "/";
+  return /\/(oauth|auth)\/callback(?:\/|$)/i.test(path);
+}
+
 export function classifyDelivery(options: {
   remainingPath: string;
   search: string;
   form: URLSearchParams | null;
 }): "oauth" | "fanout" {
+  if (isOAuthCallbackPath(options.remainingPath)) {
+    return "oauth";
+  }
+
   const query = new URLSearchParams(
     options.search.startsWith("?") ? options.search.slice(1) : options.search
   );
   const state = query.get("state") ?? options.form?.get("state");
   const code = query.get("code") ?? options.form?.get("code");
   const error = query.get("error") ?? options.form?.get("error");
-  if (state && (code || error)) {
-    return "oauth";
-  }
-
-  const path = options.remainingPath.replace(/\/+$/, "") || "/";
-  if (/\/(oauth|auth)\/callback$/i.test(path) || /^\/(oauth|auth)\/callback$/i.test(path)) {
+  if (state?.startsWith(OAUTH_STATE_PREFIX) && (code || error)) {
     return "oauth";
   }
   return "fanout";

@@ -51,7 +51,7 @@ Fan-out runs in `waitUntil`. The public caller gets `202` `{ "accepted": true }`
 
 ### Return the subscriber response for OAuth
 
-OAuth callbacks (`state` plus `code`/`error`, or `/oauth/callback` / `/auth/callback`) wait for one subscriber and return its status, `Location`, and body. `Set-Cookie` is not copied onto the Worker host. Correlate with `wrapOAuthState()`, `bindOAuthState()`, or `POST http://127.0.0.1:8790/oauth-states` from the app process. A single subscriber on the route is enough. Multiple subscribers without correlation return `409 oauth_unroutable`.
+OAuth callbacks wait for one subscriber and return its status, `Location`, and body. Classification is the callback path (`/oauth/callback`, `/auth/callback`, or nested `/api/auth/callback/...`) or a signed `wrapOAuthState()` `dr1.` value plus `code`/`error`. Arbitrary `?state=&code=` on other paths is webhook fan-out. `Set-Cookie` is not copied onto the Worker host. Correlate with `wrapOAuthState()`, `bindOAuthState()`, or `POST http://127.0.0.1:8790/oauth-states` from the app process. A single subscriber on a callback path is enough. Multiple subscribers without correlation return `409 oauth_unroutable`.
 
 ### Preserve method, body, query, and forwardable headers
 

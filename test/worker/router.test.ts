@@ -370,6 +370,20 @@ describe("public routing", () => {
     expect(response.status).toBe(409);
     expect(await response.json()).toMatchObject({ error: "oauth_unroutable" });
   });
+
+  it("does not reverse-proxy arbitrary paths that include OAuth query params", async () => {
+    await register("probe-route", "https://dev-probe.example");
+    fetchMock
+      .get("https://dev-probe.example")
+      .intercept({ path: /\/admin/, method: "GET" })
+      .reply(200, "internal-ok");
+
+    const response = await fetchWorker(
+      "https://dev-webhooks.example.com/probe-route/admin?state=1&code=1"
+    );
+    expect(response.status).toBe(202);
+    expect(await response.json()).toEqual({ accepted: true });
+  });
 });
 
 describe("reverse tunnel", () => {

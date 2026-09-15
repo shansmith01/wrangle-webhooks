@@ -190,7 +190,7 @@ Task documentation and Agent Skills:
 
 **Webhooks** fan out to every subscriber. The public caller receives `202` `{ "accepted": true }` as soon as the Worker accepts fan-out. That is **not** delivery proof: subscriber status codes are not propagated, and a 202 can succeed while a replica never handled the request. Confirm the payload in **each** subscriber’s logs before treating a fan-out test as successful.
 
-**OAuth** is single-target and returns the subscriber response (status, `Location`, body). `Set-Cookie` is not copied onto the Worker host. Correlate with `wrapOAuthState()` / `bindOAuthState()` on the sidecar connection, or `POST http://127.0.0.1:8790/oauth-states` from the app process. If a route has exactly one subscriber, that subscriber is used. Multiple subscribers without a matching `state` return `409` `{ "error": "oauth_unroutable" }`.
+**OAuth** is single-target and returns the subscriber response (status, `Location`, body) for callback paths (`/oauth/callback`, `/auth/callback`, nested `/api/auth/callback/...`) or a signed `wrapOAuthState()` value. `Set-Cookie` is not copied onto the Worker host. Arbitrary `?state=&code=` on other paths is webhook fan-out, not a reverse proxy. Correlate with `wrapOAuthState()` / `bindOAuthState()` on the sidecar connection, or `POST http://127.0.0.1:8790/oauth-states` from the app process. If a route has exactly one subscriber, that subscriber is used. Multiple subscribers without a matching `state` return `409` `{ "error": "oauth_unroutable" }`.
 
 No subscribers → `404` `{ "error": "route_not_found" }`.
 

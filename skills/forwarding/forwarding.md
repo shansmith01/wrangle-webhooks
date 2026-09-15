@@ -33,8 +33,10 @@ OAuth callbacks use **correlated single-target routing** and **return the subscr
 
 A request is treated as OAuth when:
 
-- the query or form body has `state` plus `code` or `error`, or
-- the remaining path is `/oauth/callback` or `/auth/callback`
+- the remaining path is `/oauth/callback`, `/auth/callback`, or a nested provider callback such as `/api/auth/callback/google`, or
+- the query or form body has a **signed** `wrapOAuthState()` value (`dr1.` prefix) plus `code` or `error`
+
+Arbitrary paths that merely include `state` and `code` are webhook fan-out, not a reverse proxy. Bound app-generated `state` still works on callback paths.
 
 Routing order:
 

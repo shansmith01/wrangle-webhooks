@@ -4,7 +4,7 @@ Shared Cloudflare ingress for ephemeral cloud development environments. One Work
 
 ## Coverage and batch history
 
-- **2026-09-15 / 0.3.4** — Live `--environment-id` reclaim requires the sidecar connection token; parked reconnects still work after the socket closes. Dashboard HTML fetches `/dashboard/status` and is served with CSP `default-src 'none'` (no inlined subscriber JSON).
+- **2026-09-15 / 0.3.4** — Live `--environment-id` reclaim requires the sidecar connection token; parked reconnects still work after the socket closes. Dashboard HTML fetches `/dashboard/status` and is served with CSP `default-src 'none'` (no inlined subscriber JSON). OAuth reverse-proxy is limited to callback paths and signed `wrapOAuthState()` values; arbitrary `?state=&code=` is fan-out.
 - **2026-09-15 / 0.3.3** — Control server listens before the tunnel is up; `GET /ready` 503 includes a safe `reason`. Connect skill documents local Portless development (supervisor `.env`, environment id, 401 vs closed 8790).
 - **2026-09-15 / 0.3.2** — Reverse-tunnel `fetch()` derives `Host` from `localUrl` so virtual-host proxies such as Portless can route; `X-Forwarded-Host` keeps the public host.
 - **2026-09-14 / 0.3.1** — Slim published deps (`ws` only), live WebSocket `/ready`, Amp services.yaml example, root vs named credentials, forwarding display URL.
@@ -82,7 +82,7 @@ Shared Cloudflare ingress for ephemeral cloud development environments. One Work
 
 ## Remaining Gaps
 
-None for 0.3.4 live environment-id proof, dashboard cookie + CSP (no inlined subscriber JSON), 0.3.3 immediate control-server bind, `/ready` connection-state reason, Portless local-dev supervisor rules, or 0.3.2 reverse-tunnel Host-from-localUrl.
+None for 0.3.4 live environment-id proof, OAuth proxy limited to callback paths / signed `dr1.` state, dashboard cookie + CSP (no inlined subscriber JSON), 0.3.3 immediate control-server bind, `/ready` connection-state reason, Portless local-dev supervisor rules, or 0.3.2 reverse-tunnel Host-from-localUrl.
 
 ## Recommended Skill File Structure
 
