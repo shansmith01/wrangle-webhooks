@@ -246,6 +246,9 @@ describe("dashboard", () => {
     expect(html).toContain('action="/dashboard/logout"');
     expect(html).toContain("/dashboard/status");
     expect(html).toContain('id="routes"');
+    expect(html).toContain("Live connections");
+    expect(html).toContain("Connection history");
+    expect(html).toContain('id="history"');
 
     const status = await fetchWorker("https://dev-webhooks.example.com/dashboard/status", {
       headers
@@ -255,7 +258,8 @@ describe("dashboard", () => {
       ok: true,
       routeCount: 0,
       subscriberCount: 0,
-      routes: []
+      routes: [],
+      connectionLog: []
     });
   });
 
@@ -312,6 +316,120 @@ describe("dashboard", () => {
     expect(route?.subscribers[0]?.transport).toBe("public");
     expect(route?.subscribers[0]?.targetBaseUrl).toBe("https://dev-dash.example/");
     expect(route?.subscribers[0]?.environmentId).toBe("amp-thread-dashboard");
+  });
+
+  it("keeps a historical connection audit log after disconnect", async () => {
+    const created = await fetchWorker(
+      "https://dev-webhooks.example.com/_router/routes/audit-route/subscribers",
+      {
+        method: "POST",
+        headers: authHeaders({
+          "Content-Type": "application/json",
+          "CF-Connecting-IP": "203.0.113.50"
+        }),
+        body: JSON.stringify({
+          targetBaseUrl: "https://dev-audit.example",
+          environmentId: "amp-thread-audit"
+        })
+      }
+    );
+    expect(created.status).toBe(200);
+    const registered = (await created.json()) as {
+      subscriberId: string;
+      connectionToken: string;
+    };
+    const connected = await fetchWorker("https://dev-webhooks.example.com/dashboard/status", {
+      headers: await dashboardHeaders()
+    });
+    expect(connected.status).toBe(200);
+    const live = (await connected.json()) as {
+      connectionLog: Array<{
+        action: string;
+        reason: string;
+        routeId: string;
+        subscriberId: string | null;
+        environmentId: string | null;
+        transport: string | null;
+        targetBaseUrl: string | null;
+        clientIp: string | null;
+      }>;
+    };
+    expect(live.connectionLog[0]).toMatchObject({
+      action: "connected",
+      reason: "registered",
+      routeId: "audit-route",
+      subscriberId: registered.subscriberId,
+      environmentId: "amp-thread-audit",
+      transport: "public",
+      targetBaseUrl: "https://dev-audit.example/",
+      clientIp: "203.0.113.50"
+    });
+    expect(JSON.stringify(live)).not.toContain(registered.connectionToken);
+    expect(JSON.stringify(live)).not.toMatch(/"forwardToken"/);
+
+    const removed = await fetchWorker(
+      `https://dev-webhooks.example.com/_router/routes/audit-route/subscribers/${registered.subscriberId}`,
+      { method: "DELETE", headers: authHeaders() }
+    );
+    expect(removed.status).toBe(204);
+
+    const history = await fetchWorker("https://dev-webhooks.example.com/dashboard/status", {
+      headers: await dashboardHeaders()
+    });
+    const body = (await history.json()) as {
+      routeCount: number;
+      subscriberCount: number;
+      routes: unknown[];
+      connectionLog: Array<{ action: string; reason: string; subscriberId: string | null }>;
+    };
+    expect(body.routeCount).toBe(0);
+    expect(body.subscriberCount).toBe(0);
+    expect(body.routes).toEqual([]);
+    expect(body.connectionLog[0]).toMatchObject({
+      action: "disconnected",
+      reason: "deregistered",
+      subscriberId: registered.subscriberId
+    });
+    expect(body.connectionLog[1]).toMatchObject({
+      action: "connected",
+      reason: "registered",
+      subscriberId: registered.subscriberId
+    });
+  });
+
+  it("records unauthorized join attempts with the connecting IP", async () => {
+    const response = await fetchWorker(
+      "https://dev-webhooks.example.com/_router/routes/audit-denied/subscribers",
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "CF-Connecting-IP": "198.51.100.9"
+        },
+        body: JSON.stringify({ targetBaseUrl: "https://dev-a.example" })
+      }
+    );
+    expect(response.status).toBe(401);
+
+    const status = await fetchWorker("https://dev-webhooks.example.com/dashboard/status", {
+      headers: await dashboardHeaders()
+    });
+    const body = (await status.json()) as {
+      connectionLog: Array<{
+        action: string;
+        reason: string;
+        routeId: string;
+        clientIp: string | null;
+        subscriberId: string | null;
+      }>;
+    };
+    expect(body.connectionLog[0]).toMatchObject({
+      action: "rejected",
+      reason: "unauthorized",
+      routeId: "audit-denied",
+      clientIp: "198.51.100.9",
+      subscriberId: null
+    });
   });
 
   it("redirects /dashboard.json under the cookie path", async () => {
@@ -866,6 +984,18 @@ describe("stable environment identity", () => {
     });
     expect(denied.status).toBe(409);
     expect(await denied.json()).toEqual({ error: "environment_in_use" });
+
+    const status = await fetchWorker("https://dev-webhooks.example.com/dashboard/status", {
+      headers: await dashboardHeaders()
+    });
+    const body = (await status.json()) as {
+      connectionLog: Array<{ action: string; reason: string; environmentId: string | null }>;
+    };
+    expect(body.connectionLog[0]).toMatchObject({
+      action: "rejected",
+      reason: "environment_in_use",
+      environmentId: "amp-thread-public"
+    });
   });
 });
 

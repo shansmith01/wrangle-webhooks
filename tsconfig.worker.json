@@ -17,6 +17,8 @@
     "src/public-ingress.ts",
     "src/durable-object.ts",
     "src/router-index.ts",
+    "src/connection-log.ts",
+    "src/connection-log-storage.ts",
     "src/dashboard.ts",
     "src/dashboard-session.ts",
     "src/management-auth.ts",

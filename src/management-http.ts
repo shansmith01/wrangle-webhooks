@@ -1,5 +1,9 @@
 import { deriveRouteSecret, matchJoinCredential } from "./credentials";
 import {
+  clientIpFromRequest,
+  type ConnectionLogEventInput
+} from "./connection-log";
+import {
   readManagementSecret,
   requireManagementAuth,
   unauthorizedManagementResponse
@@ -164,7 +168,26 @@ async function authorizeJoin(
     env.DEV_ROUTER_SECRET,
     routeId
   );
-  return role ? null : unauthorizedManagementResponse();
+  if (role) {
+    return null;
+  }
+  await recordRejectedJoin(request, env, routeId);
+  return unauthorizedManagementResponse();
+}
+
+/** Record an unauthenticated or invalid-credential join attempt in the connection audit log. */
+async function recordRejectedJoin(request: Request, env: Env, routeId: string): Promise<void> {
+  const url = new URL(request.url);
+  const environmentParam = url.searchParams.get("environmentId");
+  const event: ConnectionLogEventInput = {
+    action: "rejected",
+    reason: "unauthorized",
+    routeId,
+    environmentId:
+      environmentParam && isAllowedEnvironmentId(environmentParam) ? environmentParam : null,
+    clientIp: clientIpFromRequest(request)
+  };
+  await routerIndexStub(env).recordConnectionEvents([event]);
 }
 
 async function authorizeSubscriber(
@@ -282,7 +305,13 @@ async function registerSubscriber(
       : null;
 
   const stub = env.ROUTE.getByName(durableObjectNameForRoute(routeId));
-  const result = await stub.register(targetBaseUrl, routeId, environmentId ?? null, proofToken);
+  const result = await stub.register(
+    targetBaseUrl,
+    routeId,
+    environmentId ?? null,
+    proofToken,
+    clientIpFromRequest(request)
+  );
   if ("error" in result) {
     return Response.json({ error: result.error }, { status: 409 });
   }

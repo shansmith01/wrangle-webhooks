@@ -14,7 +14,14 @@ import {
 import { OAUTH_STATE_MAX_LENGTH, OAUTH_STATE_TTL_MS, unwrapOAuthStateForRoute } from "./oauth-state";
 import { randomHex } from "./random-hex";
 import { ROUTER_HEADER_CONNECTION } from "./router-headers";
-import { durableObjectNameForIndex, isAllowedEnvironmentId } from "./route-id";
+import {
+  clientIpFromRequest,
+  connectionLogTargetBaseUrl,
+  type ConnectionLogEventInput,
+  type ConnectionLogReason
+} from "./connection-log";
+import { routerIndexStub } from "./router-index";
+import { isAllowedEnvironmentId } from "./route-id";
 import { DELIVERY_TIMEOUT_MS, SUBSCRIBER_TTL_MS } from "./subscriber-lifetime";
 import { validateTargetBaseUrl } from "./target-base-url";
 import {
@@ -68,6 +75,8 @@ interface PendingTunnel {
 /** Per-route Durable Object: subscribers, OAuth bindings, and tunnel sockets. */
 export class RouteDurableObject extends DurableObject<Env> {
   private readonly pending = new Map<string, PendingTunnel>();
+  private readonly pendingConnectionLog: ConnectionLogEventInput[] = [];
+  private readonly ignoreDisconnectLog = new WeakSet<WebSocket>();
 
   constructor(ctx: DurableObjectState, env: Env) {
     super(ctx, env);
@@ -164,9 +173,11 @@ export class RouteDurableObject extends DurableObject<Env> {
       environmentId,
       transport: "tunnel",
       targetBaseUrl: "",
-      connectionToken: request.headers.get(ROUTER_HEADER_CONNECTION)
+      connectionToken: request.headers.get(ROUTER_HEADER_CONNECTION),
+      clientIp: clientIpFromRequest(request)
     });
     if (!attached.ok) {
+      await this.flushConnectionLog();
       return Response.json({ error: attached.error }, { status: 409 });
     }
     await this.syncIndex();
@@ -229,19 +240,20 @@ export class RouteDurableObject extends DurableObject<Env> {
   }
 
   async webSocketClose(ws: WebSocket, code: number, reason: string): Promise<void> {
-    await this.detachSocket(ws);
+    await this.detachSocket(ws, code === 4000 ? "stale_tunnel" : "socket_closed");
     ws.close(code, reason);
   }
 
   async webSocketError(ws: WebSocket): Promise<void> {
-    await this.detachSocket(ws);
+    await this.detachSocket(ws, "socket_closed");
   }
 
   async register(
     targetBaseUrl: string,
     routeId: string,
     environmentId?: string | null,
-    connectionToken?: string | null
+    connectionToken?: string | null,
+    clientIp?: string | null
   ): Promise<
     | {
         subscriberId: string;
@@ -260,9 +272,11 @@ export class RouteDurableObject extends DurableObject<Env> {
       environmentId: environmentId || null,
       transport: "public",
       targetBaseUrl: normalized,
-      connectionToken: connectionToken ?? null
+      connectionToken: connectionToken ?? null,
+      clientIp
     });
     if (!attached.ok) {
+      await this.flushConnectionLog();
       return { error: attached.error };
     }
     await this.scheduleCleanup(now);
@@ -287,6 +301,7 @@ export class RouteDurableObject extends DurableObject<Env> {
       )
       .toArray()[0];
     if (!existing) {
+      await this.flushConnectionLog();
       return null;
     }
 
@@ -300,6 +315,7 @@ export class RouteDurableObject extends DurableObject<Env> {
       subscriberId
     );
     await this.scheduleCleanup(now);
+    await this.flushConnectionLog();
     return { expiresIn: SUBSCRIBER_TTL_MS / 1000 };
   }
 
@@ -313,13 +329,9 @@ export class RouteDurableObject extends DurableObject<Env> {
 
   async deregister(subscriberId: string): Promise<boolean> {
     const now = Date.now();
-    this.closeSockets(subscriberId);
+    this.closeSockets(subscriberId, { ignoreDisconnectLog: true });
     this.failPendingForSubscriber(subscriberId, new Error("subscriber_disconnected"));
-    this.ctx.storage.sql.exec("DELETE FROM subscribers WHERE id = ?", subscriberId);
-    this.ctx.storage.sql.exec(
-      "DELETE FROM oauth_bindings WHERE subscriber_id = ?",
-      subscriberId
-    );
+    this.removeSubscriberRow(subscriberId, "deregistered");
     this.purgeExpired(now);
     const remaining = this.subscriberCount();
     if (remaining === 0) {
@@ -342,6 +354,7 @@ export class RouteDurableObject extends DurableObject<Env> {
     this.purgeExpired(now);
     const existing = this.lookupSubscriber(subscriberId);
     if (!existing) {
+      await this.flushConnectionLog();
       return { ok: false, error: "subscriber_not_found" };
     }
     this.ctx.storage.sql.exec(
@@ -353,6 +366,7 @@ export class RouteDurableObject extends DurableObject<Env> {
       subscriberId,
       now + OAUTH_STATE_TTL_MS
     );
+    await this.flushConnectionLog();
     return { ok: true };
   }
 
@@ -366,9 +380,11 @@ export class RouteDurableObject extends DurableObject<Env> {
          ORDER BY created_at ASC`
       )
       .toArray();
-    return rows
+    const subscribers = rows
       .filter((row) => row.transport !== "tunnel" || this.liveSocket(row.id) || Boolean(row.environment_id))
       .map(toSubscriber);
+    await this.flushConnectionLog();
+    return subscribers;
   }
 
   async fanOut(payload: IngressPayload): Promise<void> {
@@ -377,43 +393,47 @@ export class RouteDurableObject extends DurableObject<Env> {
     await Promise.allSettled(
       subscribers.map((subscriber) => this.deliver(subscriber, payload, body, false))
     );
+    await this.flushConnectionLog();
   }
 
   async proxyOAuth(payload: IngressPayload): Promise<ProxyResult> {
-    const subscribers = this.deliverySubscribers();
-    if (subscribers.length === 0) {
-      return { kind: "error", status: 404, error: "route_not_found" };
-    }
-
-    const matched = await this.resolveOAuthSubscriber(payload.oauthState, subscribers);
-    if (!matched) {
-      return {
-        kind: "error",
-        status: subscribers.length > 1 ? 409 : 404,
-        error: subscribers.length > 1 ? "oauth_unroutable" : "oauth_subscriber_not_found",
-        message:
-          subscribers.length > 1
-            ? "OAuth callback could not be correlated to a single subscriber"
-            : "OAuth subscriber is no longer connected"
-      };
-    }
-
-    const body = bodyFromPayload(payload);
-    if (body.byteLength > TUNNEL_MAX_BODY_BYTES && matched.transport === "tunnel") {
-      return { kind: "error", status: 413, error: "request_too_large" };
-    }
-
     try {
-      const result = await this.deliver(matched, payload, body, true);
-      return result;
-    } catch (error) {
-      const message = error instanceof Error ? error.message : "subscriber_unreachable";
-      return {
-        kind: "error",
-        status: 502,
-        error: "subscriber_unreachable",
-        message
-      };
+      const subscribers = this.deliverySubscribers();
+      if (subscribers.length === 0) {
+        return { kind: "error", status: 404, error: "route_not_found" };
+      }
+
+      const matched = await this.resolveOAuthSubscriber(payload.oauthState, subscribers);
+      if (!matched) {
+        return {
+          kind: "error",
+          status: subscribers.length > 1 ? 409 : 404,
+          error: subscribers.length > 1 ? "oauth_unroutable" : "oauth_subscriber_not_found",
+          message:
+            subscribers.length > 1
+              ? "OAuth callback could not be correlated to a single subscriber"
+              : "OAuth subscriber is no longer connected"
+        };
+      }
+
+      const body = bodyFromPayload(payload);
+      if (body.byteLength > TUNNEL_MAX_BODY_BYTES && matched.transport === "tunnel") {
+        return { kind: "error", status: 413, error: "request_too_large" };
+      }
+
+      try {
+        return await this.deliver(matched, payload, body, true);
+      } catch (error) {
+        const message = error instanceof Error ? error.message : "subscriber_unreachable";
+        return {
+          kind: "error",
+          status: 502,
+          error: "subscriber_unreachable",
+          message
+        };
+      }
+    } finally {
+      await this.flushConnectionLog();
     }
   }
 
@@ -581,6 +601,7 @@ export class RouteDurableObject extends DurableObject<Env> {
     transport: "public" | "tunnel";
     targetBaseUrl: string;
     connectionToken?: string | null;
+    clientIp?: string | null;
   }): Promise<
     | {
         ok: true;
@@ -602,10 +623,27 @@ export class RouteDurableObject extends DurableObject<Env> {
       if (this.subscriberIsLive(existing)) {
         const proof = options.connectionToken ?? "";
         if (!(await connectionTokenMatches(proof, existing.connection_token_hash))) {
+          this.queueConnectionLog({
+            action: "rejected",
+            reason: "environment_in_use",
+            subscriberId: existing.id,
+            environmentId: existing.environment_id,
+            transport: existing.transport === "tunnel" ? "tunnel" : "public",
+            targetBaseUrl: connectionLogTargetBaseUrl(existing.transport, existing.target_base_url),
+            clientIp: options.clientIp
+          });
           return { ok: false, error: "environment_in_use" };
         }
+        this.queueConnectionLog({
+          action: "disconnected",
+          reason: "replaced",
+          subscriberId: existing.id,
+          environmentId: existing.environment_id,
+          transport: existing.transport === "tunnel" ? "tunnel" : "public",
+          targetBaseUrl: connectionLogTargetBaseUrl(existing.transport, existing.target_base_url)
+        });
       }
-      this.closeSockets(existing.id);
+      this.closeSockets(existing.id, { ignoreDisconnectLog: true });
       this.failPendingForSubscriber(existing.id, new Error("subscriber_replaced"));
       const forwardToken = this.ensureForwardToken(existing);
       this.ctx.storage.sql.exec(
@@ -621,6 +659,15 @@ export class RouteDurableObject extends DurableObject<Env> {
         options.environmentId,
         existing.id
       );
+      this.queueConnectionLog({
+        action: "connected",
+        reason: "reclaimed",
+        subscriberId: existing.id,
+        environmentId: options.environmentId,
+        transport: options.transport,
+        targetBaseUrl: connectionLogTargetBaseUrl(options.transport, options.targetBaseUrl),
+        clientIp: options.clientIp
+      });
       return {
         ok: true,
         subscriberId: existing.id,
@@ -645,6 +692,15 @@ export class RouteDurableObject extends DurableObject<Env> {
       connectionTokenHash,
       options.environmentId
     );
+    this.queueConnectionLog({
+      action: "connected",
+      reason: "registered",
+      subscriberId,
+      environmentId: options.environmentId,
+      transport: options.transport,
+      targetBaseUrl: connectionLogTargetBaseUrl(options.transport, options.targetBaseUrl),
+      clientIp: options.clientIp
+    });
     return { ok: true, subscriberId, forwardToken, connectionToken };
   }
 
@@ -704,15 +760,29 @@ export class RouteDurableObject extends DurableObject<Env> {
     );
   }
 
-  private async detachSocket(ws: WebSocket): Promise<void> {
+  private async detachSocket(
+    ws: WebSocket,
+    reason: Extract<ConnectionLogReason, "socket_closed" | "stale_tunnel">
+  ): Promise<void> {
     const [subscriberId] = this.ctx.getTags(ws);
     if (!subscriberId) {
       return;
     }
     this.failPendingForSubscriber(subscriberId, new Error("tunnel_disconnected"));
+    if (this.ignoreDisconnectLog.has(ws)) {
+      return;
+    }
     const row = this.lookupSubscriber(subscriberId);
     if (row?.environment_id) {
       const now = Date.now();
+      this.queueConnectionLog({
+        action: "disconnected",
+        reason,
+        subscriberId,
+        environmentId: row.environment_id,
+        transport: "tunnel",
+        targetBaseUrl: "reverse-tunnel"
+      });
       this.ctx.storage.sql.exec(
         `UPDATE subscribers
          SET last_heartbeat_at = ?, expires_at = ?
@@ -725,16 +795,18 @@ export class RouteDurableObject extends DurableObject<Env> {
       await this.syncIndex();
       return;
     }
-    this.ctx.storage.sql.exec("DELETE FROM subscribers WHERE id = ?", subscriberId);
-    this.ctx.storage.sql.exec(
-      "DELETE FROM oauth_bindings WHERE subscriber_id = ?",
-      subscriberId
-    );
+    this.removeSubscriberRow(subscriberId, reason);
     await this.syncIndex();
   }
 
-  private closeSockets(subscriberId: string): void {
+  private closeSockets(
+    subscriberId: string,
+    options?: { ignoreDisconnectLog?: boolean }
+  ): void {
     for (const ws of this.ctx.getWebSockets(subscriberId)) {
+      if (options?.ignoreDisconnectLog) {
+        this.ignoreDisconnectLog.add(ws);
+      }
       try {
         ws.close(1000, "deregistered");
       } catch {
@@ -759,10 +831,15 @@ export class RouteDurableObject extends DurableObject<Env> {
   }
 
   private purgeExpired(now: number): void {
-    this.ctx.storage.sql.exec(
-      "DELETE FROM subscribers WHERE transport = 'public' AND expires_at <= ?",
-      now
-    );
+    const expiredPublic = this.ctx.storage.sql
+      .exec<{ id: string }>(
+        "SELECT id FROM subscribers WHERE transport = 'public' AND expires_at <= ?",
+        now
+      )
+      .toArray();
+    for (const row of expiredPublic) {
+      this.removeSubscriberRow(row.id, "expired");
+    }
     const expiredTunnels = this.ctx.storage.sql
       .exec<{ id: string }>(
         "SELECT id FROM subscribers WHERE transport = 'tunnel' AND expires_at <= ?",
@@ -775,8 +852,7 @@ export class RouteDurableObject extends DurableObject<Env> {
         continue;
       }
       this.failPendingForSubscriber(row.id, new Error("tunnel_disconnected"));
-      this.ctx.storage.sql.exec("DELETE FROM subscribers WHERE id = ?", row.id);
-      this.ctx.storage.sql.exec("DELETE FROM oauth_bindings WHERE subscriber_id = ?", row.id);
+      this.removeSubscriberRow(row.id, "expired");
     }
     this.ctx.storage.sql.exec("DELETE FROM oauth_bindings WHERE expires_at <= ?", now);
     this.purgeDisconnectedTunnels();
@@ -797,8 +873,7 @@ export class RouteDurableObject extends DurableObject<Env> {
         continue;
       }
       this.failPendingForSubscriber(row.id, new Error("tunnel_disconnected"));
-      this.ctx.storage.sql.exec("DELETE FROM subscribers WHERE id = ?", row.id);
-      this.ctx.storage.sql.exec("DELETE FROM oauth_bindings WHERE subscriber_id = ?", row.id);
+      this.removeSubscriberRow(row.id, "socket_closed");
     }
   }
 
@@ -840,6 +915,46 @@ export class RouteDurableObject extends DurableObject<Env> {
       .one().count;
   }
 
+  /** Queue a client connection audit event; flushed to the router index. */
+  private queueConnectionLog(
+    event: Omit<ConnectionLogEventInput, "routeId"> & { routeId?: string }
+  ): void {
+    this.pendingConnectionLog.push({
+      ...event,
+      routeId: event.routeId ?? this.getRouteId() ?? ""
+    });
+  }
+
+  private async flushConnectionLog(): Promise<void> {
+    if (this.pendingConnectionLog.length === 0) {
+      return;
+    }
+    const events = this.pendingConnectionLog.splice(0);
+    await routerIndexStub(this.env).recordConnectionEvents(events);
+  }
+
+  /** Delete a subscriber row and record why it left the live set. */
+  private removeSubscriberRow(subscriberId: string, reason: ConnectionLogReason): void {
+    const row = this.lookupSubscriber(subscriberId);
+    if (!row) {
+      return;
+    }
+    const transport = row.transport === "tunnel" ? "tunnel" : "public";
+    this.queueConnectionLog({
+      action: "disconnected",
+      reason,
+      subscriberId,
+      environmentId: row.environment_id,
+      transport,
+      targetBaseUrl: connectionLogTargetBaseUrl(transport, row.target_base_url)
+    });
+    this.ctx.storage.sql.exec("DELETE FROM subscribers WHERE id = ?", subscriberId);
+    this.ctx.storage.sql.exec(
+      "DELETE FROM oauth_bindings WHERE subscriber_id = ?",
+      subscriberId
+    );
+  }
+
   private setRouteId(routeId: string): void {
     this.ctx.storage.sql.exec(
       `INSERT INTO meta (key, value) VALUES ('route_id', ?)
@@ -856,11 +971,12 @@ export class RouteDurableObject extends DurableObject<Env> {
   }
 
   private async syncIndex(): Promise<void> {
+    await this.flushConnectionLog();
     const routeId = this.getRouteId();
     if (routeId === null) {
       return;
     }
-    const index = this.env.ROUTER_INDEX.getByName(durableObjectNameForIndex());
+    const index = routerIndexStub(this.env);
     if (this.subscriberCount() === 0) {
       await index.removeRoute(routeId);
       return;

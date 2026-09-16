@@ -12,6 +12,7 @@ import {
   dashboardStatus,
   type DashboardRoute
 } from "./dashboard";
+import { publicPathForRouteId } from "./connection-log";
 import { routerIndexStub } from "./router-index";
 import { durableObjectNameForRoute } from "./route-id";
 import { timingSafeEqualString } from "./timing-safe-equal";
@@ -67,8 +68,8 @@ export async function handleDashboard(
     if (!authed) {
       return unauthorizedDashboard();
     }
-    const routes = await loadDashboardRoutes(env);
-    return Response.json(dashboardStatus(Boolean(env.DEV_ROUTER_SECRET), routes), {
+    const status = await loadDashboardStatus(env);
+    return Response.json(status, {
       headers: { "Cache-Control": "no-store" }
     });
   }
@@ -77,8 +78,7 @@ export async function handleDashboard(
     if (!authed) {
       return dashboardLoginResponse();
     }
-    const routes = await loadDashboardRoutes(env);
-    const status = dashboardStatus(Boolean(env.DEV_ROUTER_SECRET), routes);
+    const status = await loadDashboardStatus(env);
     return new Response(dashboardHtml(status), {
       headers: dashboardHtmlHeaders()
     });
@@ -117,6 +117,14 @@ async function readDashboardLoginPassword(request: Request): Promise<string> {
   return typeof password === "string" ? password : "";
 }
 
+async function loadDashboardStatus(env: Env) {
+  const [routes, connectionLog] = await Promise.all([
+    loadDashboardRoutes(env),
+    routerIndexStub(env).listConnectionEvents()
+  ]);
+  return dashboardStatus(Boolean(env.DEV_ROUTER_SECRET), routes, connectionLog);
+}
+
 async function loadDashboardRoutes(env: Env): Promise<DashboardRoute[]> {
   const routeIds = await routerIndexStub(env).listRoutes();
   const routes: DashboardRoute[] = [];
@@ -130,7 +138,7 @@ async function loadDashboardRoutes(env: Env): Promise<DashboardRoute[]> {
     }
     routes.push({
       routeId,
-      publicPath: routeId === "" ? "/*" : `/${routeId}/*`,
+      publicPath: publicPathForRouteId(routeId),
       subscribers
     });
   }

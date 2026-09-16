@@ -1,4 +1,13 @@
 import { DurableObject } from "cloudflare:workers";
+import {
+  type ConnectionLogEvent,
+  type ConnectionLogEventInput
+} from "./connection-log";
+import {
+  insertConnectionLogEvents,
+  listConnectionLogEvents,
+  migrateConnectionLog
+} from "./connection-log-storage";
 import { durableObjectNameForIndex, isAllowedRouteId } from "./route-id";
 
 interface RouteRow {
@@ -12,7 +21,7 @@ export function routerIndexStub(env: Env): DurableObjectStub<RouterIndex> {
   return env.ROUTER_INDEX.getByName(durableObjectNameForIndex());
 }
 
-/** Router-wide index of route ids that currently have subscribers. */
+/** Router-wide index of active routes and the historical connection audit log. */
 export class RouterIndex extends DurableObject<Env> {
   constructor(ctx: DurableObjectState, env: Env) {
     super(ctx, env);
@@ -28,6 +37,7 @@ export class RouterIndex extends DurableObject<Env> {
         updated_at INTEGER NOT NULL
       )
     `);
+    migrateConnectionLog(this.ctx.storage.sql);
   }
 
   async addRoute(routeId: string): Promise<void> {
@@ -51,5 +61,18 @@ export class RouterIndex extends DurableObject<Env> {
       .exec<RouteRow>("SELECT route_id, updated_at FROM routes ORDER BY route_id ASC")
       .toArray();
     return rows.map((row) => row.route_id);
+  }
+
+  /** Append client connection audit events for operator review. */
+  async recordConnectionEvents(events: ConnectionLogEventInput[]): Promise<void> {
+    if (events.length === 0) {
+      return;
+    }
+    insertConnectionLogEvents(this.ctx.storage.sql, events);
+  }
+
+  /** Historical client connections, newest first, including routes with no live subscribers. */
+  async listConnectionEvents(limit?: number): Promise<ConnectionLogEvent[]> {
+    return listConnectionLogEvents(this.ctx.storage.sql, limit);
   }
 }
