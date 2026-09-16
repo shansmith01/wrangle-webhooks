@@ -35,7 +35,10 @@ skills:
       - shansmith01/wrangle-webhooks:src/connection-state.ts
       - shansmith01/wrangle-webhooks:src/credentials.ts
       - shansmith01/wrangle-webhooks:src/detect-url.ts
-      - shansmith01/wrangle-webhooks:src/shared.ts
+      - shansmith01/wrangle-webhooks:src/route-id.ts
+      - shansmith01/wrangle-webhooks:src/local-url.ts
+      - shansmith01/wrangle-webhooks:src/target-base-url.ts
+      - shansmith01/wrangle-webhooks:src/ingress-urls.ts
   - name: deploy
     slug: deploy
     domain: worker-operations
@@ -53,7 +56,8 @@ skills:
       - shansmith01/wrangle-webhooks:wrangler.jsonc
       - shansmith01/wrangle-webhooks:src/worker.ts
       - shansmith01/wrangle-webhooks:src/dashboard.ts
-      - shansmith01/wrangle-webhooks:src/auth.ts
+      - shansmith01/wrangle-webhooks:src/dashboard-session.ts
+      - shansmith01/wrangle-webhooks:src/management-auth.ts
       - shansmith01/wrangle-webhooks:src/credentials.ts
   - name: forwarding
     slug: forwarding
@@ -73,4 +77,6 @@ skills:
       - shansmith01/wrangle-webhooks:src/forward.ts
       - shansmith01/wrangle-webhooks:src/durable-object.ts
       - shansmith01/wrangle-webhooks:src/oauth-state.ts
-      - shansmith01/wrangle-webhooks:src/shared.ts
+      - shansmith01/wrangle-webhooks:src/router-headers.ts
+      - shansmith01/wrangle-webhooks:src/ingress-urls.ts
+      - shansmith01/wrangle-webhooks:src/public-ingress.ts

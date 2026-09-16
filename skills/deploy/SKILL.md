@@ -17,7 +17,8 @@ sources:
   - shansmith01/wrangle-webhooks:wrangler.jsonc
   - shansmith01/wrangle-webhooks:src/worker.ts
   - shansmith01/wrangle-webhooks:src/dashboard.ts
-  - shansmith01/wrangle-webhooks:src/auth.ts
+  - shansmith01/wrangle-webhooks:src/dashboard-session.ts
+  - shansmith01/wrangle-webhooks:src/management-auth.ts
   - shansmith01/wrangle-webhooks:src/credentials.ts
 ---
 
@@ -86,7 +87,7 @@ Wrong: assuming `/dashboard` is public, or that `Authorization: Bearer <DEV_ROUT
 
 Correct: `/dashboard` uses a `Path=/dashboard` session cookie after posting `DEV_ROUTER_DASHBOARD_PASSWORD` to `/dashboard/login`. `/_router/*` join is bearer-protected (operator or route credential) with a timing-safe compare. Subscriber mutations need the operator secret or that connection’s token.
 
-Source: `src/worker.ts`, `src/auth.ts`, `src/credentials.ts`
+Source: `src/worker.ts`, `src/dashboard-session.ts`, `src/management-auth.ts`, `src/credentials.ts`
 
 ## Completion
 

@@ -35,13 +35,13 @@ Shared Cloudflare ingress for ephemeral cloud development environments. One Work
 | # | Mistake | Priority | Source | Cross-skill? |
 | --- | --- | --- | --- | --- |
 | 1 | Treat client as in-process middleware | HIGH | skills/connect/connect.md | — |
-| 2 | Pass localhost as `--target` instead of `--local-url` | HIGH | src/shared.ts | — |
+| 2 | Pass localhost as `--target` instead of `--local-url` | HIGH | src/target-base-url.ts | — |
 | 3 | npx public package name `dev-router` without install | HIGH | skills/connect/connect.md | — |
-| 4 | Reserved route prefix | MEDIUM | src/shared.ts | — |
+| 4 | Reserved route prefix | MEDIUM | src/route-id.ts | — |
 | 5 | Declare a new environment ready without OAuth | HIGH | skills/connect/connect.md | forwarding |
 | 6 | Give every orb the operator secret | HIGH | src/credentials.ts | deploy |
 | 7 | Treat /ready as connected from a parked subscriber id | HIGH | src/control-server.ts | — |
-| 8 | Use a PID as `--environment-id` | HIGH | src/shared.ts | — |
+| 8 | Use a PID as `--environment-id` | HIGH | src/route-id.ts | — |
 | 9 | Reuse another replica’s live `--environment-id` | HIGH | src/durable-object.ts | — |
 | 10 | `source .env` / `test -f` in the supervisor | HIGH | skills/connect/connect.md | — |
 | 11 | Declare Portless success from a public 202 | HIGH | skills/forwarding/forwarding.md | forwarding |

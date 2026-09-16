@@ -1,0 +1,11 @@
+{
+  "version": 1,
+  "skills": {
+    "write-discoverable-code": {
+      "source": "modem-dev/skills",
+      "sourceType": "github",
+      "skillPath": "write-discoverable-code/SKILL.md",
+      "computedHash": "6402f2e0718be1665ab52620b81cd8c7abfbdfadd127b64bb3b368fcbe49259c"
+    }
+  }
+}

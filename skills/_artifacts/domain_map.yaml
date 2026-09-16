@@ -57,7 +57,7 @@ skills:
           await client.connect({ targetBaseUrl: "http://localhost:3000" });
         correct_pattern: |
           await client.connect({ targetBaseUrl: "https://abc123.trycloudflare.com" });
-        source: src/shared.ts
+        source: src/target-base-url.ts
         priority: HIGH
         status: active
         version_context: '0.1.0'

@@ -4,34 +4,40 @@
     "connect": {
       "sources_sha": {
         "shansmith01/wrangle-webhooks:skills/connect/connect.md": "87171118e994cbfa7302afccf5e539b69d22eee5f963ac41dded384d867773c3",
-        "shansmith01/wrangle-webhooks:src/cli.ts": "a302c2eb73790c353cdac80ae64c3b32a8d98096ad43b4a530a530e2a5e30f49",
-        "shansmith01/wrangle-webhooks:src/client.ts": "0da923231535c79306ade686dc4eb51038f9171c0e1f8ed3464dffaee96df6dd",
-        "shansmith01/wrangle-webhooks:src/tunnel-client.ts": "e494b4443b2a3d2cd6640becf16d2e84b9c456b69110ff91b4beb8e2e51f834f",
-        "shansmith01/wrangle-webhooks:src/control-server.ts": "9946915f516a30f6f0161302a224249aa77c3799aa6c7d63c10ac242ee56afa1",
-        "shansmith01/wrangle-webhooks:src/connection-state.ts": "67b0c6c5702910495d7587403b55dbbbf7e7556546c1e28ed832e53ca4a0b257",
-        "shansmith01/wrangle-webhooks:src/credentials.ts": "6cd9fc4b19608d9f936d132a9cacad87ad96b6fbd001221ffd2a415d120e8d87",
-        "shansmith01/wrangle-webhooks:src/detect-url.ts": "98a738a208eaa94686f6f8ad3d446cfafc9c64b78931cbd241781e64d5ef4919",
-        "shansmith01/wrangle-webhooks:src/shared.ts": "4d7d5d2b350077adf663101bd5d459972ccc74f685de24fdfde73a39500ecb6f"
+        "shansmith01/wrangle-webhooks:src/cli.ts": "afd78d253d4794b20507702812e28113611f7faa3d1d781430e867c9aac3731e",
+        "shansmith01/wrangle-webhooks:src/client.ts": "50e2fa519aa1ae023b2b754b74d4c6c2d6c9f81eef22a29c583c83eb7b45a05c",
+        "shansmith01/wrangle-webhooks:src/tunnel-client.ts": "4fc103e166f9645ab28a67613d8f48ebab0a0e65ac15741e4a2c3cbbe2086ba2",
+        "shansmith01/wrangle-webhooks:src/control-server.ts": "dc9e0392c19347b8db4038ed1355db8e1232b4080ad97c6269dcfaeb393ef98e",
+        "shansmith01/wrangle-webhooks:src/connection-state.ts": "ed84cce4e08bf152b5c2391abebb1597b83064315770592bf6337b219014659a",
+        "shansmith01/wrangle-webhooks:src/credentials.ts": "dd1bd35e33f17a4a6b8e59b2854785bd04efe82a7f81a9357efedf9ef9ace1e8",
+        "shansmith01/wrangle-webhooks:src/detect-url.ts": "42fd72a5b376c6187dbb84178d5c32cc12371cd65a37f9a27272b20a37b7ff4a",
+        "shansmith01/wrangle-webhooks:src/route-id.ts": "c339c03d78fc74df4c2cfe51e52f6f626858a91f8aa00ca1bc68484c4ca0a8ae",
+        "shansmith01/wrangle-webhooks:src/local-url.ts": "1acefaf54a0d642c50d87f8c80fbfad296198c3adb1d3478497886ad86c4f462",
+        "shansmith01/wrangle-webhooks:src/target-base-url.ts": "571f999563150428087951e9885e119eb86f757b2ca8a35c376cd732f55e127d",
+        "shansmith01/wrangle-webhooks:src/ingress-urls.ts": "e76f1c6de2e9077d70fdbb43c42ee796bb917e3480431271319fef1014435c10"
       }
     },
     "deploy": {
       "sources_sha": {
         "shansmith01/wrangle-webhooks:skills/deploy/deploy.md": "c10c14ad3b065bbac9ed9a74d5a7fe8613f3e48dd8a3709d4072532c9d785d2f",
         "shansmith01/wrangle-webhooks:wrangler.jsonc": "ebf814ab7f68ed187e3caa136cb9d5e3d2b318d87bb65f9bdb66993b9a046b1d",
-        "shansmith01/wrangle-webhooks:src/worker.ts": "060cf273a9894a3c2f55611aa3e49fc69f7ab20852d765de4a56d7ba14337622",
-        "shansmith01/wrangle-webhooks:src/dashboard.ts": "3e6556d1532e0b23d07a1ee934ae442c901f097c7cf82701c7b0473c0c5e82b0",
-        "shansmith01/wrangle-webhooks:src/auth.ts": "8e2794913f476906fd8e609dea6dd338d3a6f50ce1af78d3e4bc34591b124f06",
-        "shansmith01/wrangle-webhooks:src/credentials.ts": "6cd9fc4b19608d9f936d132a9cacad87ad96b6fbd001221ffd2a415d120e8d87"
+        "shansmith01/wrangle-webhooks:src/worker.ts": "8b361058a14b3391cec4790708d84b4bae52a41ee3bcb0991fa1dd9987300ea7",
+        "shansmith01/wrangle-webhooks:src/dashboard.ts": "c24a6a868395713c864aa3c2c9b9381b762823614d2a6fbbcd450498f15c89fc",
+        "shansmith01/wrangle-webhooks:src/dashboard-session.ts": "feda090b8b1bd77d28d18ec145007ea12c7216bbb6bbed4ea83b8fb06dfe6b2e",
+        "shansmith01/wrangle-webhooks:src/management-auth.ts": "fadeba7e308ab112b172b7567b20db75f735ec633de291605c9dab4e16958fe4",
+        "shansmith01/wrangle-webhooks:src/credentials.ts": "dd1bd35e33f17a4a6b8e59b2854785bd04efe82a7f81a9357efedf9ef9ace1e8"
       }
     },
     "forwarding": {
       "sources_sha": {
         "shansmith01/wrangle-webhooks:skills/forwarding/forwarding.md": "8d12da568fca2356c42c0a391ffa15e69175f6cb0d65b03812de253486531332",
-        "shansmith01/wrangle-webhooks:src/worker.ts": "060cf273a9894a3c2f55611aa3e49fc69f7ab20852d765de4a56d7ba14337622",
-        "shansmith01/wrangle-webhooks:src/forward.ts": "695e2427d63635386b4d71f81eee65923d8b30373c12013ddcf4b1085e62b38f",
-        "shansmith01/wrangle-webhooks:src/durable-object.ts": "08982892088f15e21065dc409f2ae2a31722ebbd526bee52f4fdff2fc84cfe54",
-        "shansmith01/wrangle-webhooks:src/oauth-state.ts": "4872d90b47efd691f59bb1fecd7979d7af0cfe175ad60b7f5e079262bd1f96dd",
-        "shansmith01/wrangle-webhooks:src/shared.ts": "4d7d5d2b350077adf663101bd5d459972ccc74f685de24fdfde73a39500ecb6f"
+        "shansmith01/wrangle-webhooks:src/worker.ts": "8b361058a14b3391cec4790708d84b4bae52a41ee3bcb0991fa1dd9987300ea7",
+        "shansmith01/wrangle-webhooks:src/forward.ts": "6d502c6c53143bebbd9543a4d1d5c95d9e048323aad4a525659d914364253315",
+        "shansmith01/wrangle-webhooks:src/durable-object.ts": "25264b4063c55dfa67a066f055b27d90fc0b9b5483c0456849b80dd76154a39c",
+        "shansmith01/wrangle-webhooks:src/oauth-state.ts": "4a05b442bbcd4f0953e44c41813f5067d28c75e2870b9153f23e7fa663a73549",
+        "shansmith01/wrangle-webhooks:src/router-headers.ts": "3673dde9193e0e1f45e190e195d0d88a61131ef058e873e664f5b5f7d8b53a27",
+        "shansmith01/wrangle-webhooks:src/ingress-urls.ts": "e76f1c6de2e9077d70fdbb43c42ee796bb917e3480431271319fef1014435c10",
+        "shansmith01/wrangle-webhooks:src/public-ingress.ts": "9e262eee4da881f6a392dd581687c1a3c6a547ff3c950e04f3a5e5f45c26baaa"
       }
     }
   }

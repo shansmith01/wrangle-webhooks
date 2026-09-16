@@ -18,7 +18,9 @@ sources:
   - shansmith01/wrangle-webhooks:src/forward.ts
   - shansmith01/wrangle-webhooks:src/durable-object.ts
   - shansmith01/wrangle-webhooks:src/oauth-state.ts
-  - shansmith01/wrangle-webhooks:src/shared.ts
+  - shansmith01/wrangle-webhooks:src/router-headers.ts
+  - shansmith01/wrangle-webhooks:src/ingress-urls.ts
+  - shansmith01/wrangle-webhooks:src/public-ingress.ts
 ---
 
 # Request forwarding contract
@@ -73,7 +75,7 @@ Wrong: treating a public `202` as proof the app returned `200`, or as proof ever
 
 Correct: webhook fan-out only accepts the public hop. Inspect **each** subscriber’s logs for the real status. OAuth is the opposite: the public response **is** the subscriber response.
 
-Source: `src/worker.ts` `handlePublic`
+Source: `src/public-ingress.ts` `handlePublicIngress`
 
 ### HIGH Fanning an OAuth authorization code to every subscriber
 

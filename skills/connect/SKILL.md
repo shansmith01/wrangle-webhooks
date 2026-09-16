@@ -26,7 +26,10 @@ sources:
   - shansmith01/wrangle-webhooks:src/connection-state.ts
   - shansmith01/wrangle-webhooks:src/credentials.ts
   - shansmith01/wrangle-webhooks:src/detect-url.ts
-  - shansmith01/wrangle-webhooks:src/shared.ts
+  - shansmith01/wrangle-webhooks:src/route-id.ts
+  - shansmith01/wrangle-webhooks:src/local-url.ts
+  - shansmith01/wrangle-webhooks:src/target-base-url.ts
+  - shansmith01/wrangle-webhooks:src/ingress-urls.ts
 ---
 
 # Connect a cloud environment
@@ -233,7 +236,7 @@ await client.connect({ localUrl: "http://127.0.0.1:3000" });
 
 `validateTargetBaseUrl` still rejects `http:` for public-target transport. Private environments must use `--local-url`.
 
-Source: `src/shared.ts`, `skills/connect/connect.md`
+Source: `src/target-base-url.ts`, `src/local-url.ts`, `skills/connect/connect.md`
 
 ### HIGH Looking up the public npm name `dev-router`
 
@@ -267,7 +270,7 @@ await client.connect({ routeId: "dashboard", localUrl: "http://127.0.0.1:3000" }
 
 Correct: omit `--route` for root ingress (mint with `npx dev-router token`), or pick an unreserved id such as `nomads` (mint with `npx dev-router token --route nomads`). `_router` and `dashboard` are reserved.
 
-Source: `src/shared.ts`
+Source: `src/route-id.ts`
 
 ### HIGH Treating GET /ready as connected because a subscriber id exists
 
@@ -283,7 +286,7 @@ Wrong: `--environment-id "local-$$"` or any per-process id.
 
 Correct: `local-<sanitized-hostname>-<checkout-path-hash>`. PIDs change after restart and park stale subscribers. Max 128 characters; only `A-Za-z0-9._~:@+-`.
 
-Source: `src/shared.ts`
+Source: `src/route-id.ts`
 
 ### HIGH Reusing another replica’s --environment-id to take over its socket
 
