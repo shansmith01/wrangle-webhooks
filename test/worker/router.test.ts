@@ -247,6 +247,8 @@ describe("dashboard", () => {
     expect(html).toContain("/dashboard/status");
     expect(html).toContain('id="routes"');
     expect(html).toContain("Live connections");
+    expect(html).toContain("Inbound requests");
+    expect(html).toContain('id="inbound"');
     expect(html).toContain("Connection history");
     expect(html).toContain('id="history"');
 
@@ -259,6 +261,7 @@ describe("dashboard", () => {
       routeCount: 0,
       subscriberCount: 0,
       routes: [],
+      inboundLog: [],
       connectionLog: []
     });
   });
@@ -460,6 +463,42 @@ describe("public routing", () => {
     expect(await response.json()).toEqual({ error: "route_not_found" });
   });
 
+  it("records unmatched inbound requests without query values", async () => {
+    const response = await fetchWorker(
+      "https://dev-webhooks.example.com/missing/api/hooks?access_token=SHOULD-NOT-LOG"
+    );
+    expect(response.status).toBe(404);
+
+    const status = await fetchWorker("https://dev-webhooks.example.com/dashboard/status", {
+      headers: await dashboardHeaders()
+    });
+    const body = (await status.json()) as {
+      inboundLog: Array<{
+        method: string;
+        routeId: string | null;
+        path: string;
+        hasQuery: boolean;
+        kind: string;
+        result: string;
+        status: number;
+        error: string | null;
+        subscriberCount: number;
+      }>;
+    };
+    expect(body.inboundLog[0]).toMatchObject({
+      method: "GET",
+      routeId: null,
+      path: "/missing/api/hooks",
+      hasQuery: true,
+      kind: "webhook",
+      result: "rejected",
+      status: 404,
+      error: "route_not_found",
+      subscriberCount: 0
+    });
+    expect(JSON.stringify(body)).not.toContain("SHOULD-NOT-LOG");
+  });
+
   it("accepts a public request and fans out to every subscriber independently", async () => {
     await register("fanout-route", "https://dev-a.example/dev-ingress");
     await register("fanout-route", "https://dev-b.example/dev-ingress");
@@ -520,6 +559,66 @@ describe("public routing", () => {
     const stripe =
       headerBag["stripe-signature"] ?? headerBag["Stripe-Signature"];
     expect(stripe).toBe("t=1,v1=sig");
+  });
+
+  it("records inbound webhook metadata without body, query, or headers", async () => {
+    await register("inbound-log", "https://dev-inbound.example");
+    fetchMock
+      .get("https://dev-inbound.example")
+      .intercept({ path: /\/api\/hooks\/payment/, method: "POST" })
+      .reply(200, "ok");
+
+    const response = await fetchWorker(
+      "https://dev-webhooks.example.com/inbound-log/api/hooks/payment?customer=SHOULD-NOT-LOG",
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: "Bearer SHOULD-NOT-LOG",
+          Cookie: "session=SHOULD-NOT-LOG",
+          "Stripe-Signature": "t=1,v1=SHOULD-NOT-LOG"
+        },
+        body: '{"email":"SHOULD-NOT-LOG@example.com","card":"4242"}'
+      }
+    );
+    expect(response.status).toBe(202);
+
+    const status = await fetchWorker("https://dev-webhooks.example.com/dashboard/status", {
+      headers: await dashboardHeaders()
+    });
+    const body = (await status.json()) as {
+      inboundLog: Array<{
+        id: string;
+        method: string;
+        routeId: string | null;
+        path: string;
+        hasQuery: boolean;
+        kind: string;
+        result: string;
+        status: number;
+        error: string | null;
+        subscriberCount: number;
+        bodyBytes: number;
+      }>;
+    };
+    expect(body.inboundLog[0]).toMatchObject({
+      method: "POST",
+      routeId: "inbound-log",
+      path: "/api/hooks/payment",
+      hasQuery: true,
+      kind: "webhook",
+      result: "accepted",
+      status: 202,
+      error: null,
+      subscriberCount: 1,
+      bodyBytes: '{"email":"SHOULD-NOT-LOG@example.com","card":"4242"}'.length
+    });
+    expect(body.inboundLog[0]?.id).toMatch(/^req_[a-z0-9]+$/i);
+    const serialized = JSON.stringify(body);
+    expect(serialized).not.toContain("SHOULD-NOT-LOG");
+    expect(serialized).not.toContain("4242");
+    expect(serialized).not.toContain("Bearer");
+    expect(serialized).not.toMatch(/"forwardToken"/);
   });
 
   it("does not forward the reserved management namespace", async () => {
@@ -588,6 +687,30 @@ describe("public routing", () => {
     );
     expect(nested.status).toBe(302);
     expect(nested.headers.get("Location")).toBe("https://app.example/google");
+
+    const status = await fetchWorker("https://dev-webhooks.example.com/dashboard/status", {
+      headers: await dashboardHeaders()
+    });
+    const body = (await status.json()) as {
+      inboundLog: Array<{
+        kind: string;
+        result: string;
+        status: number;
+        path: string;
+        hasQuery: boolean;
+        error: string | null;
+      }>;
+    };
+    expect(body.inboundLog[0]).toMatchObject({
+      kind: "oauth",
+      result: "proxied",
+      status: 302,
+      path: "/api/auth/callback/google",
+      hasQuery: true,
+      error: null
+    });
+    expect(JSON.stringify(body)).not.toContain("one-time");
+    expect(JSON.stringify(body)).not.toContain("orb-a-state");
   });
 
   it("does not fan an uncorrelated OAuth callback to every subscriber", async () => {
@@ -599,6 +722,29 @@ describe("public routing", () => {
     );
     expect(response.status).toBe(409);
     expect(await response.json()).toMatchObject({ error: "oauth_unroutable" });
+
+    const status = await fetchWorker("https://dev-webhooks.example.com/dashboard/status", {
+      headers: await dashboardHeaders()
+    });
+    const body = (await status.json()) as {
+      inboundLog: Array<{
+        kind: string;
+        result: string;
+        status: number;
+        error: string | null;
+        path: string;
+        hasQuery: boolean;
+      }>;
+    };
+    expect(body.inboundLog[0]).toMatchObject({
+      kind: "oauth",
+      result: "rejected",
+      status: 409,
+      error: "oauth_unroutable",
+      path: "/oauth/callback",
+      hasQuery: true
+    });
+    expect(JSON.stringify(body)).not.toContain("one-time");
   });
 
   it("does not reverse-proxy arbitrary paths that include OAuth query params", async () => {

@@ -18,7 +18,7 @@ Management endpoints under `/_router/*` require a bearer credential. Store the *
 `wrangler.jsonc` names the Worker `dev-router`, enables `nodejs_compat` and observability, and binds two SQLite Durable Objects:
 
 - `ROUTE` → `RouteDurableObject` (per-route subscribers, hibernatable tunnel WebSockets, OAuth `state` bindings)
-- `ROUTER_INDEX` → `RouterIndex` (active route ids and the historical connection audit log for `/dashboard`)
+- `ROUTER_INDEX` → `RouterIndex` (active route ids, inbound request metadata, and the historical connection audit log for `/dashboard`)
 
 After changing bindings, regenerate types with `npx wrangler types`. Do not hand-write `Env`.
 
@@ -32,4 +32,4 @@ npm test
 npx wrangler dev
 ```
 
-The dashboard is password-gated HTML at `/dashboard` and JSON at `/dashboard/status`. Sign-in is `POST /dashboard/login` with `DEV_ROUTER_DASHBOARD_PASSWORD`; that sets an HttpOnly `SameSite=Strict` cookie with `Path=/dashboard` so it is not sent on webhook or OAuth paths. `/dashboard.json` redirects to `/dashboard/status`. HTML does not embed subscriber JSON in a script tag; the page fetches `/dashboard/status` and is served with `Content-Security-Policy` `default-src 'none'` (inline style/script, `connect-src 'self'`). The dashboard lists live routes, subscriber counts, transport (`public` or `tunnel`), and environment id, plus a connection history audit log of connects, disconnects, and rejected joins (with `CF-Connecting-IP` when Cloudflare provides it). History survives disconnects for 90 days, capped at 2,000 events. It does not expose `DEV_ROUTER_SECRET`, route credentials, connection tokens, or per-connection forward tokens.
+The dashboard is password-gated HTML at `/dashboard` and JSON at `/dashboard/status`. Sign-in is `POST /dashboard/login` with `DEV_ROUTER_DASHBOARD_PASSWORD`; that sets an HttpOnly `SameSite=Strict` cookie with `Path=/dashboard` so it is not sent on webhook or OAuth paths. `/dashboard.json` redirects to `/dashboard/status`. HTML does not embed subscriber JSON in a script tag; the page fetches `/dashboard/status` and is served with `Content-Security-Policy` `default-src 'none'` (inline style/script, `connect-src 'self'`). The dashboard lists live routes, subscriber counts, transport (`public` or `tunnel`), and environment id; an inbound request stream (method, route, path without query, public status, subscriber count, body size); and a connection history audit log of connects, disconnects, and rejected joins (with `CF-Connecting-IP` when Cloudflare provides it). Inbound rows are metadata only: no bodies, query strings, or headers. Inbound history is kept for 7 days, capped at 5,000 events. Connection history survives disconnects for 90 days, capped at 2,000 events. It does not expose `DEV_ROUTER_SECRET`, route credentials, connection tokens, or per-connection forward tokens.

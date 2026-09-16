@@ -8,6 +8,15 @@ import {
   listConnectionLogEvents,
   migrateConnectionLog
 } from "./connection-log-storage";
+import {
+  type InboundLogEvent,
+  type InboundLogEventInput
+} from "./inbound-log";
+import {
+  insertInboundLogEvents,
+  listInboundLogEvents,
+  migrateInboundLog
+} from "./inbound-log-storage";
 import { durableObjectNameForIndex, isAllowedRouteId } from "./route-id";
 
 interface RouteRow {
@@ -21,7 +30,7 @@ export function routerIndexStub(env: Env): DurableObjectStub<RouterIndex> {
   return env.ROUTER_INDEX.getByName(durableObjectNameForIndex());
 }
 
-/** Router-wide index of active routes and the historical connection audit log. */
+/** Router-wide index of active routes, connection audit log, and inbound request metadata. */
 export class RouterIndex extends DurableObject<Env> {
   constructor(ctx: DurableObjectState, env: Env) {
     super(ctx, env);
@@ -38,6 +47,7 @@ export class RouterIndex extends DurableObject<Env> {
       )
     `);
     migrateConnectionLog(this.ctx.storage.sql);
+    migrateInboundLog(this.ctx.storage.sql);
   }
 
   async addRoute(routeId: string): Promise<void> {
@@ -74,5 +84,18 @@ export class RouterIndex extends DurableObject<Env> {
   /** Historical client connections, newest first, including routes with no live subscribers. */
   async listConnectionEvents(limit?: number): Promise<ConnectionLogEvent[]> {
     return listConnectionLogEvents(this.ctx.storage.sql, limit);
+  }
+
+  /** Append inbound public-request metadata for the dashboard stream. */
+  async recordInboundEvents(events: InboundLogEventInput[]): Promise<void> {
+    if (events.length === 0) {
+      return;
+    }
+    insertInboundLogEvents(this.ctx.storage.sql, events);
+  }
+
+  /** Inbound public requests, newest first, metadata only (no body, query, or headers). */
+  async listInboundEvents(limit?: number): Promise<InboundLogEvent[]> {
+    return listInboundLogEvents(this.ctx.storage.sql, limit);
   }
 }

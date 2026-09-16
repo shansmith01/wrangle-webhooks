@@ -16,6 +16,7 @@
     "src/cli-command.ts",
     "src/dev-router-types.ts",
     "src/connection-log.ts",
+    "src/inbound-log.ts",
     "src/connection-retry.ts",
     "src/connection-state.ts",
     "src/credentials.ts",

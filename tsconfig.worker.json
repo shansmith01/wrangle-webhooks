@@ -19,6 +19,8 @@
     "src/router-index.ts",
     "src/connection-log.ts",
     "src/connection-log-storage.ts",
+    "src/inbound-log.ts",
+    "src/inbound-log-storage.ts",
     "src/dashboard.ts",
     "src/dashboard-session.ts",
     "src/management-auth.ts",

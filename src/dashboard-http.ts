@@ -118,11 +118,13 @@ async function readDashboardLoginPassword(request: Request): Promise<string> {
 }
 
 async function loadDashboardStatus(env: Env) {
-  const [routes, connectionLog] = await Promise.all([
+  const index = routerIndexStub(env);
+  const [routes, connectionLog, inboundLog] = await Promise.all([
     loadDashboardRoutes(env),
-    routerIndexStub(env).listConnectionEvents()
+    index.listConnectionEvents(),
+    index.listInboundEvents()
   ]);
-  return dashboardStatus(Boolean(env.DEV_ROUTER_SECRET), routes, connectionLog);
+  return dashboardStatus(Boolean(env.DEV_ROUTER_SECRET), routes, connectionLog, inboundLog);
 }
 
 async function loadDashboardRoutes(env: Env): Promise<DashboardRoute[]> {

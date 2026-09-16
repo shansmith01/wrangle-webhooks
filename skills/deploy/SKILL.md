@@ -57,7 +57,7 @@ Keep secrets in `.dev.vars` locally. Do not commit them.
 
 ### Dashboard
 
-`GET /dashboard` is a password form that sets an HttpOnly `SameSite=Strict` cookie with `Path=/dashboard`. JSON is `GET /dashboard/status` (`/dashboard.json` redirects there so the cookie is sent). HTML does not inline subscriber JSON; the page fetches `/dashboard/status` and is served with CSP `default-src 'none'` (inline style/script, `connect-src 'self'`). They list live routes, subscriber counts, transport, environment id, and a historical connection audit log (connect, disconnect, rejected joins, and connecting IP). They do not return `DEV_ROUTER_SECRET`, route credentials, connection tokens, or per-connection forward tokens.
+`GET /dashboard` is a password form that sets an HttpOnly `SameSite=Strict` cookie with `Path=/dashboard`. JSON is `GET /dashboard/status` (`/dashboard.json` redirects there so the cookie is sent). HTML does not inline subscriber JSON; the page fetches `/dashboard/status` and is served with CSP `default-src 'none'` (inline style/script, `connect-src 'self'`). They list live routes, subscriber counts, transport, environment id, an inbound request stream (metadata only: no bodies, query strings, or headers), and a historical connection audit log (connect, disconnect, rejected joins, and connecting IP). They do not return `DEV_ROUTER_SECRET`, route credentials, connection tokens, or per-connection forward tokens.
 
 ## Common Mistakes
 

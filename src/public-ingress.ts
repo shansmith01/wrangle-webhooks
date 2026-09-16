@@ -1,7 +1,13 @@
 import { RouteDurableObject } from "./durable-object";
+import {
+  inboundBodyBytes,
+  type InboundLogEventInput,
+  type InboundLogKind
+} from "./inbound-log";
 import { remainingPathFromPublicUrl } from "./ingress-urls";
 import { classifyDelivery, parseFormBody, readOAuthState } from "./oauth-state";
 import { durableObjectNameForRoute, isValidRouteId } from "./route-id";
+import { routerIndexStub } from "./router-index";
 import {
   decodeBody,
   encodeBody,
@@ -18,12 +24,32 @@ export async function handlePublicIngress(
 ): Promise<Response> {
   const resolved = await resolvePublicRoute(env, url);
   if (!resolved) {
+    const requestId = newPublicRequestId();
+    await recordPublicInboundLog(env, {
+      id: requestId,
+      method: request.method,
+      routeId: null,
+      remainingPath: url.pathname || "/",
+      search: url.search,
+      kind: inboundLogKind(
+        classifyDelivery({
+          remainingPath: url.pathname || "/",
+          search: url.search,
+          form: null
+        })
+      ),
+      result: "rejected",
+      status: 404,
+      error: "route_not_found",
+      subscriberCount: 0,
+      bodyBytes: inboundBodyBytes(request)
+    });
     return Response.json({ error: "route_not_found" }, { status: 404 });
   }
 
   const body = await request.arrayBuffer();
   const form = parseFormBody(request.headers.get("content-type"), body);
-  const requestId = `req_${crypto.randomUUID().replaceAll("-", "").slice(0, 12)}`;
+  const requestId = newPublicRequestId();
   const payload: IngressPayload = {
     remainingPath: resolved.remainingPath,
     search: url.search,
@@ -43,13 +69,56 @@ export async function handlePublicIngress(
     search: url.search,
     form
   });
+  const kind = inboundLogKind(delivery);
 
   if (delivery === "oauth") {
-    return proxyResultToResponse(await stub.proxyOAuth(payload));
+    const result = await stub.proxyOAuth(payload);
+    await recordPublicInboundLog(env, {
+      id: requestId,
+      method: request.method,
+      routeId: resolved.routeId,
+      remainingPath: resolved.remainingPath,
+      search: url.search,
+      kind,
+      result: result.kind === "proxy" ? "proxied" : "rejected",
+      status: result.status,
+      error: result.kind === "error" ? result.error : null,
+      subscriberCount: resolved.subscribers.length,
+      bodyBytes: inboundBodyBytes(request, body)
+    });
+    return proxyResultToResponse(result);
   }
 
+  await recordPublicInboundLog(env, {
+    id: requestId,
+    method: request.method,
+    routeId: resolved.routeId,
+    remainingPath: resolved.remainingPath,
+    search: url.search,
+    kind,
+    result: "accepted",
+    status: 202,
+    subscriberCount: resolved.subscribers.length,
+    bodyBytes: inboundBodyBytes(request, body)
+  });
   ctx.waitUntil(stub.fanOut(payload));
   return Response.json({ accepted: true }, { status: 202 });
+}
+
+function newPublicRequestId(): string {
+  return `req_${crypto.randomUUID().replaceAll("-", "").slice(0, 12)}`;
+}
+
+function inboundLogKind(delivery: "oauth" | "fanout"): InboundLogKind {
+  return delivery === "oauth" ? "oauth" : "webhook";
+}
+
+/** Persist metadata for one public ingress request; never the body, query, or headers. */
+async function recordPublicInboundLog(
+  env: Env,
+  event: InboundLogEventInput
+): Promise<void> {
+  await routerIndexStub(env).recordInboundEvents([event]);
 }
 
 function proxyResultToResponse(result: {

@@ -1,6 +1,10 @@
 import type { Subscriber } from "./dev-router-types";
 import type { ConnectionLogEvent } from "./connection-log";
 import { publicPathForRouteId } from "./connection-log";
+import {
+  formatInboundBodyBytes,
+  type InboundLogEvent
+} from "./inbound-log";
 
 /** HTML dashboard snapshot of active routes and subscribers. */
 export interface DashboardRoute {
@@ -17,14 +21,16 @@ export interface DashboardStatus {
   routeCount: number;
   subscriberCount: number;
   routes: DashboardRoute[];
+  inboundLog: InboundLogEvent[];
   connectionLog: ConnectionLogEvent[];
 }
 
-/** Build the dashboard status JSON from the current route list and connection audit log. */
+/** Build the dashboard status JSON from live routes, inbound requests, and connection audit. */
 export function dashboardStatus(
   secretConfigured: boolean,
   routes: DashboardRoute[],
-  connectionLog: ConnectionLogEvent[] = []
+  connectionLog: ConnectionLogEvent[] = [],
+  inboundLog: InboundLogEvent[] = []
 ): DashboardStatus {
   const active = routes.filter((route) => route.subscribers.length > 0);
   return {
@@ -34,6 +40,7 @@ export function dashboardStatus(
     routeCount: active.length,
     subscriberCount: active.reduce((sum, route) => sum + route.subscribers.length, 0),
     routes: active,
+    inboundLog,
     connectionLog
   };
 }
@@ -69,7 +76,7 @@ const DASHBOARD_CSS = `
       background: var(--bg);
       color: var(--text);
     }
-    main { max-width: 960px; margin: 0 auto; padding: 32px 20px 64px; }
+    main { max-width: 1100px; margin: 0 auto; padding: 32px 20px 64px; }
     h1 { font-size: 1.5rem; font-weight: 650; margin: 0 0 8px; }
     .lede { color: var(--muted); margin: 0 0 24px; }
     .stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 12px; margin-bottom: 28px; }
@@ -93,8 +100,11 @@ const DASHBOARD_CSS = `
     th { color: var(--muted); font-weight: 600; }
     code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; word-break: break-all; }
     .empty { color: var(--muted); padding: 24px; text-align: center; }
-    .event-connected { color: var(--ok); }
-    .event-rejected { color: var(--warn); }
+    .event-connected, .result-accepted { color: var(--ok); }
+    .result-proxied { color: var(--accent); }
+    .event-rejected, .result-rejected { color: var(--warn); }
+    .hint { color: var(--muted); font-size: 13px; margin: -4px 0 12px; }
+    .error-code { color: var(--muted); font-size: 12px; }
     .meta { color: var(--muted); font-size: 12px; margin-top: 20px; display: flex; gap: 12px; align-items: center; flex-wrap: wrap; }
     .meta form { margin: 0; }
     .meta button, .login button {
@@ -133,7 +143,7 @@ export function dashboardLoginHtml(error?: string): string {
 <body>
   <main>
     <h1>Dev router</h1>
-    <p class="lede">Sign in to view worker health, live subscriber connections, and the connection audit log.</p>
+    <p class="lede">Sign in to view worker health, live subscriber connections, inbound requests, and the connection audit log.</p>
     <form class="card login" method="post" action="/dashboard/login">
       <label for="password">Dashboard password</label>
       ${error ? `<p class="error">${escapeHtml(error)}</p>` : ""}
@@ -157,7 +167,7 @@ export function dashboardHtml(status: DashboardStatus): string {
 <body>
   <main>
     <h1>Dev router</h1>
-    <p class="lede">Worker health, live subscriber connections, and a historical connection audit log.</p>
+    <p class="lede">Worker health, live subscriber connections, inbound request stream, and a historical connection audit log.</p>
     <div class="stats">
       <div class="card">
         <div class="label">Worker</div>
@@ -178,6 +188,9 @@ export function dashboardHtml(status: DashboardStatus): string {
     </div>
     <h2 class="section-title">Live connections</h2>
     <div id="routes">${renderRoutes(status.routes)}</div>
+    <h2 class="section-title">Inbound requests</h2>
+    <p class="hint">Metadata only. Bodies, query strings, and headers are not stored.</p>
+    <div id="inbound">${renderInboundLog(status.inboundLog)}</div>
     <h2 class="section-title">Connection history</h2>
     <div id="history">${renderConnectionLog(status.connectionLog)}</div>
     <p class="meta">
@@ -198,6 +211,7 @@ export function dashboardHtml(status: DashboardStatus): string {
         <div class="card"><div class="label">Active routes</div><div class="value">\${data.routeCount}</div></div>
         <div class="card"><div class="label">Connections</div><div class="value">\${data.subscriberCount}</div></div>\`;
       document.getElementById("routes").innerHTML = routesHtml(data.routes);
+      document.getElementById("inbound").innerHTML = inboundHtml(data.inboundLog || []);
       document.getElementById("history").innerHTML = historyHtml(data.connectionLog || []);
       document.getElementById("updated").textContent = fmt(data.generatedAt);
     }
@@ -219,6 +233,27 @@ export function dashboardHtml(status: DashboardStatus): string {
           <div class="table-wrap"><table><thead><tr><th>Subscriber</th><th>Environment id</th><th>Transport</th><th>Target</th><th>Last heartbeat</th><th>Expires</th></tr></thead>
           <tbody>\${rows}</tbody></table></div></div>\`;
       }).join("");
+    }
+    function inboundHtml(events) {
+      if (!events.length) {
+        return '<div class="card empty">No inbound requests recorded yet.</div>';
+      }
+      const rows = events.map((event) => \`
+        <tr>
+          <td>\${fmt(event.occurredAt)}</td>
+          <td><code>\${esc(event.id)}</code></td>
+          <td>\${esc(event.kind)}</td>
+          <td>\${esc(event.method)}</td>
+          <td>\${event.routeId == null ? "—" : \`<code>\${esc(publicPath(event.routeId))}</code>\`}</td>
+          <td><code>\${esc(event.path)}\${event.hasQuery ? "?" : ""}</code></td>
+          <td class="\${resultClass(event.result)}">\${esc(event.result)}</td>
+          <td>\${esc(String(event.status))}\${event.error ? \` <span class="error-code">\${esc(event.error)}</span>\` : ""}</td>
+          <td>\${esc(String(event.subscriberCount))}</td>
+          <td>\${esc(formatBytes(event.bodyBytes))}</td>
+        </tr>\`).join("");
+      return \`<div class="card history"><div class="table-wrap"><table>
+        <thead><tr><th>When</th><th>Request</th><th>Kind</th><th>Method</th><th>Route</th><th>Path</th><th>Result</th><th>Status</th><th>Subscribers</th><th>Size</th></tr></thead>
+        <tbody>\${rows}</tbody></table></div></div>\`;
     }
     function historyHtml(events) {
       if (!events.length) {
@@ -247,6 +282,17 @@ export function dashboardHtml(status: DashboardStatus): string {
       if (action === "rejected") return "event-rejected";
       if (action === "connected") return "event-connected";
       return "";
+    }
+    function resultClass(result) {
+      if (result === "rejected") return "result-rejected";
+      if (result === "accepted") return "result-accepted";
+      if (result === "proxied") return "result-proxied";
+      return "";
+    }
+    function formatBytes(n) {
+      const bytes = Number(n);
+      if (!Number.isFinite(bytes) || bytes < 1024) return String(Math.max(0, Math.floor(bytes) || 0)) + " B";
+      return (bytes / 1024).toFixed(1) + " KB";
     }
     function esc(value) {
       return String(value).replace(/[&<>"']/g, (ch) => ({
@@ -289,6 +335,46 @@ function renderRoutes(routes: DashboardRoute[]): string {
         <tbody>${rows}</tbody></table></div></div>`;
     })
     .join("");
+}
+
+function renderInboundLog(events: InboundLogEvent[]): string {
+  if (events.length === 0) {
+    return '<div class="card empty">No inbound requests recorded yet.</div>';
+  }
+  const rows = events
+    .map((event) => {
+      const resultClass =
+        event.result === "rejected"
+          ? "result-rejected"
+          : event.result === "accepted"
+            ? "result-accepted"
+            : event.result === "proxied"
+              ? "result-proxied"
+              : "";
+      const route =
+        event.routeId == null
+          ? "—"
+          : `<code>${escapeHtml(publicPathForRouteId(event.routeId))}</code>`;
+      const error = event.error
+        ? ` <span class="error-code">${escapeHtml(event.error)}</span>`
+        : "";
+      return `<tr>
+            <td>${escapeHtml(new Date(event.occurredAt).toISOString())}</td>
+            <td><code>${escapeHtml(event.id)}</code></td>
+            <td>${escapeHtml(event.kind)}</td>
+            <td>${escapeHtml(event.method)}</td>
+            <td>${route}</td>
+            <td><code>${escapeHtml(event.path)}${event.hasQuery ? "?" : ""}</code></td>
+            <td class="${resultClass}">${escapeHtml(event.result)}</td>
+            <td>${escapeHtml(String(event.status))}${error}</td>
+            <td>${escapeHtml(String(event.subscriberCount))}</td>
+            <td>${escapeHtml(formatInboundBodyBytes(event.bodyBytes))}</td>
+          </tr>`;
+    })
+    .join("");
+  return `<div class="card history"><div class="table-wrap"><table>
+        <thead><tr><th>When</th><th>Request</th><th>Kind</th><th>Method</th><th>Route</th><th>Path</th><th>Result</th><th>Status</th><th>Subscribers</th><th>Size</th></tr></thead>
+        <tbody>${rows}</tbody></table></div></div>`;
 }
 
 function renderConnectionLog(events: ConnectionLogEvent[]): string {
