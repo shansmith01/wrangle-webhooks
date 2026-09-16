@@ -5,6 +5,7 @@ export interface DetectedPublicUrl {
 
 const DEFAULT_PORT = 3000;
 
+/** Resolve the local app port from an explicit value, DEV_ROUTER_PORT, or PORT. */
 export function resolveDevPort(
   env: NodeJS.ProcessEnv = process.env,
   explicitPort?: number
@@ -22,6 +23,7 @@ export function resolveDevPort(
   return DEFAULT_PORT;
 }
 
+/** Detect the public https:// origin of this cloud dev environment. */
 export function detectPublicDevUrl(
   env: NodeJS.ProcessEnv = process.env,
   explicitPort?: number

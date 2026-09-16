@@ -2,8 +2,10 @@ import type { ConnectionStateReason } from "./connection-state";
 
 export type { ConnectionStateReason } from "./connection-state";
 
+/** How the Worker reaches this subscriber: public HTTPS fetch or reverse tunnel. */
 export type SubscriberTransport = "public" | "tunnel";
 
+/** Active subscriber recorded on a route Durable Object. */
 export interface Subscriber {
   id: string;
   transport: SubscriberTransport;
@@ -14,6 +16,7 @@ export interface Subscriber {
   environmentId: string | null;
 }
 
+/** JSON body returned when a sidecar registers a subscriber. */
 export interface RegisterSubscriberResponse {
   subscriberId: string;
   routeId: string;
@@ -22,11 +25,13 @@ export interface RegisterSubscriberResponse {
   connectionToken: string;
 }
 
+/** Constructor options for the sidecar client. */
 export interface DevRouterClientOptions {
   routerUrl: string;
   secret: string;
 }
 
+/** Options for opening a public-target or reverse-tunnel connection. */
 export interface ConnectOptions {
   routeId?: string;
   targetBaseUrl?: string;
@@ -35,6 +40,7 @@ export interface ConnectOptions {
   environmentId?: string;
 }
 
+/** Live sidecar subscription to a shared Worker route. */
 export interface Connection {
   subscriberId: string;
   routeId: string;
@@ -52,6 +58,7 @@ export interface Connection {
   bindOAuthState(state: string): Promise<void>;
 }
 
+/** Public HTTP request captured by the Worker for fan-out or OAuth proxy. */
 export interface IngressPayload {
   remainingPath: string;
   search: string;
@@ -65,6 +72,7 @@ export interface IngressPayload {
   oauthState: string | null;
 }
 
+/** Result of proxying an OAuth callback to a single subscriber. */
 export type ProxyResult =
   | {
       kind: "proxy";

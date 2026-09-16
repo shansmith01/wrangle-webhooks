@@ -1,3 +1,4 @@
+/** Why a sidecar is connecting, live, unauthorized, network-failed, or disconnected. */
 export type ConnectionStateReason =
   | "connecting"
   | "connected"
@@ -5,6 +6,7 @@ export type ConnectionStateReason =
   | "network_error"
   | "disconnected";
 
+/** Map an HTTP error or thrown error to unauthorized vs network_error. */
 export function classifyConnectionFailure(
   error: unknown,
   statusCode?: number
@@ -19,6 +21,7 @@ export function classifyConnectionFailure(
   return "network_error";
 }
 
+/** Advance connection state after a failure, keeping unauthorized sticky. */
 export function nextConnectionFailure(
   current: ConnectionStateReason,
   error: unknown,

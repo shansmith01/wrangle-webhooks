@@ -1,5 +1,5 @@
 import { DurableObject } from "cloudflare:workers";
-import { isAllowedRouteId } from "./shared";
+import { durableObjectNameForIndex, isAllowedRouteId } from "./route-id";
 
 interface RouteRow {
   route_id: string;
@@ -7,6 +7,12 @@ interface RouteRow {
   [key: string]: SqlStorageValue;
 }
 
+/** Durable Object stub for the router-wide index of active routes. */
+export function routerIndexStub(env: Env): DurableObjectStub<RouterIndex> {
+  return env.ROUTER_INDEX.getByName(durableObjectNameForIndex());
+}
+
+/** Router-wide index of route ids that currently have subscribers. */
 export class RouterIndex extends DurableObject<Env> {
   constructor(ctx: DurableObjectState, env: Env) {
     super(ctx, env);

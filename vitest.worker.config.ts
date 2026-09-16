@@ -5,6 +5,7 @@ export default defineWorkersConfig({
     include: ["test/worker/**/*.test.ts"],
     poolOptions: {
       workers: {
+        isolatedStorage: true,
         wrangler: { configPath: "./wrangler.jsonc" },
         miniflare: {
           bindings: {

@@ -1,7 +1,7 @@
 import { unlink } from "node:fs/promises";
 import http from "node:http";
 import type { AddressInfo } from "node:net";
-import type { Connection } from "./types";
+import type { Connection } from "./dev-router-types";
 
 export const CONTROL_DEFAULT_PORT = 8790;
 const LOOPBACK_HOSTS = new Set(["127.0.0.1", "localhost", "::1"]);
@@ -18,6 +18,7 @@ export interface ControlServer {
   close(): Promise<void>;
 }
 
+/** Start the loopback control server used to bind OAuth state from the app process. */
 export async function startControlServer(
   connection: Connection,
   options: ControlServerOptions = {}

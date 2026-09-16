@@ -1,12 +1,13 @@
-import { decodeTunnelSubprotocolSecret } from "./tunnel-protocol";
+import { hmacSha256Base64Url } from "./hmac-sha256";
+import { timingSafeEqualString } from "./timing-safe-equal";
 
+/** Cookie name for the signed dashboard session. */
 export const DASHBOARD_COOKIE_NAME = "dev_router_dashboard";
+
+/** Dashboard session lifetime in milliseconds (seven days). */
 export const DASHBOARD_SESSION_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 
-export function unauthorized(): Response {
-  return Response.json({ error: "unauthorized" }, { status: 401 });
-}
-
+/** JSON 401 for a missing or invalid dashboard session. */
 export function unauthorizedDashboard(): Response {
   return Response.json(
     { error: "unauthorized" },
@@ -14,6 +15,7 @@ export function unauthorizedDashboard(): Response {
   );
 }
 
+/** True when the request carries a valid signed dashboard session cookie. */
 export async function requireDashboardAuth(
   request: Request,
   password: string
@@ -28,6 +30,7 @@ export async function requireDashboardAuth(
   return verifyDashboardSession(session, password);
 }
 
+/** Mint a signed dashboard session cookie value from the dashboard password. */
 export async function mintDashboardSession(
   password: string,
   now = Date.now()
@@ -37,6 +40,7 @@ export async function mintDashboardSession(
   return `${exp}.${mac}`;
 }
 
+/** Verify a signed dashboard session against the dashboard password. */
 export async function verifyDashboardSession(
   session: string,
   password: string,
@@ -56,38 +60,14 @@ export async function verifyDashboardSession(
   return timingSafeEqualString(mac, expected);
 }
 
+/** Set-Cookie header that stores a dashboard session on `/dashboard`. */
 export function dashboardSessionSetCookie(request: Request, session: string): string {
   return serializeDashboardCookie(request, session, DASHBOARD_SESSION_TTL_MS / 1000);
 }
 
+/** Set-Cookie header that clears the dashboard session cookie. */
 export function dashboardSessionClearCookie(request: Request): string {
   return serializeDashboardCookie(request, "", 0);
-}
-
-export function timingSafeEqualString(left: string, right: string): boolean {
-  const encoder = new TextEncoder();
-  const leftBytes = encoder.encode(left);
-  const rightBytes = encoder.encode(right);
-  const length = Math.max(leftBytes.byteLength, rightBytes.byteLength, 1);
-  let mismatch = leftBytes.byteLength === rightBytes.byteLength ? 0 : 1;
-  for (let i = 0; i < length; i++) {
-    mismatch |= (leftBytes[i] ?? 0) ^ (rightBytes[i] ?? 0);
-  }
-  return mismatch === 0;
-}
-
-export function requireManagementAuth(request: Request, secret: string): boolean {
-  const bearer = readManagementSecret(request);
-  return bearer !== null && timingSafeEqualString(bearer, secret);
-}
-
-export function readManagementSecret(request: Request): string | null {
-  const header = request.headers.get("Authorization") ?? "";
-  const prefix = "Bearer ";
-  if (header.startsWith(prefix) && header.length > prefix.length) {
-    return header.slice(prefix.length);
-  }
-  return decodeTunnelSubprotocolSecret(request.headers.get("Sec-WebSocket-Protocol"));
 }
 
 function readDashboardSession(request: Request): string | null {
@@ -112,16 +92,4 @@ function serializeDashboardCookie(request: Request, value: string, maxAge: numbe
 
 function dashboardSessionPayload(exp: number): string {
   return `dev-router:dashboard:${exp}`;
-}
-
-async function hmacSha256Base64Url(secret: string, data: string): Promise<string> {
-  const key = await crypto.subtle.importKey(
-    "raw",
-    new TextEncoder().encode(secret),
-    { name: "HMAC", hash: "SHA-256" },
-    false,
-    ["sign"]
-  );
-  const signature = await crypto.subtle.sign("HMAC", key, new TextEncoder().encode(data));
-  return Buffer.from(signature).toString("base64url");
 }

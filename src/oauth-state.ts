@@ -1,7 +1,14 @@
+import { hmacSha256Base64Url } from "./hmac-sha256";
+import { timingSafeEqualString } from "./timing-safe-equal";
+
+/** Prefix on signed OAuth `state` values minted by the sidecar. */
 export const OAUTH_STATE_PREFIX = "dr1.";
+/** Milliseconds a signed OAuth state remains valid. */
 export const OAUTH_STATE_TTL_MS = 15 * 60 * 1000;
+/** Maximum accepted length of an OAuth state string. */
 export const OAUTH_STATE_MAX_LENGTH = 2_048;
 
+/** Payload inside a signed `dr1.` OAuth state. */
 export interface SignedOAuthState {
   v: 1;
   sub: string;
@@ -17,11 +24,13 @@ export class OAuthStateError extends Error {
   }
 }
 
+/** True when the remaining path looks like an OAuth or auth callback. */
 export function isOAuthCallbackPath(remainingPath: string): boolean {
   const path = remainingPath.replace(/\/+$/, "") || "/";
   return /\/(oauth|auth)\/callback(?:\/|$)/i.test(path);
 }
 
+/** Choose OAuth proxy vs webhook fan-out from path, query, and form fields. */
 export function classifyDelivery(options: {
   remainingPath: string;
   search: string;
@@ -43,6 +52,7 @@ export function classifyDelivery(options: {
   return "fanout";
 }
 
+/** Read the OAuth `state` query or form field from an inbound request. */
 export function readOAuthState(
   search: string,
   form: URLSearchParams | null
@@ -52,6 +62,7 @@ export function readOAuthState(
   return state && state.length > 0 ? state : null;
 }
 
+/** Parse `application/x-www-form-urlencoded` bodies; otherwise return null. */
 export function parseFormBody(
   contentType: string | null,
   body: ArrayBuffer
@@ -62,6 +73,7 @@ export function parseFormBody(
   return new URLSearchParams(new TextDecoder().decode(body));
 }
 
+/** Sign an OAuth state that routes the callback back to this subscriber. */
 export async function wrapOAuthState(options: {
   secret: string;
   subscriberId: string;
@@ -86,6 +98,7 @@ export async function wrapOAuthState(options: {
   return `${OAUTH_STATE_PREFIX}${encoded}.${mac}`;
 }
 
+/** Unwrap a signed OAuth state using the operator secret, then the route secret. */
 export async function unwrapOAuthStateForRoute(options: {
   operatorSecret: string;
   routeSecret: string;
@@ -99,6 +112,7 @@ export async function unwrapOAuthStateForRoute(options: {
   return unwrapOAuthState(options.routeSecret, options.state, options.now);
 }
 
+/** Verify and decode a `dr1.` signed OAuth state with one HMAC secret. */
 export async function unwrapOAuthState(
   secret: string,
   state: string,
@@ -115,7 +129,7 @@ export async function unwrapOAuthState(
   const encoded = rest.slice(0, split);
   const mac = rest.slice(split + 1);
   const expected = await hmacSha256Base64Url(secret, encoded);
-  if (!timingSafeEqualUtf8(mac, expected)) {
+  if (!timingSafeEqualString(mac, expected)) {
     return null;
   }
   try {
@@ -132,28 +146,4 @@ export async function unwrapOAuthState(
   } catch {
     return null;
   }
-}
-
-async function hmacSha256Base64Url(secret: string, data: string): Promise<string> {
-  const key = await crypto.subtle.importKey(
-    "raw",
-    new TextEncoder().encode(secret),
-    { name: "HMAC", hash: "SHA-256" },
-    false,
-    ["sign"]
-  );
-  const signature = await crypto.subtle.sign("HMAC", key, new TextEncoder().encode(data));
-  return Buffer.from(signature).toString("base64url");
-}
-
-function timingSafeEqualUtf8(left: string, right: string): boolean {
-  const encoder = new TextEncoder();
-  const leftBytes = encoder.encode(left);
-  const rightBytes = encoder.encode(right);
-  const length = Math.max(leftBytes.byteLength, rightBytes.byteLength, 1);
-  let mismatch = leftBytes.byteLength === rightBytes.byteLength ? 0 : 1;
-  for (let i = 0; i < length; i++) {
-    mismatch |= (leftBytes[i] ?? 0) ^ (rightBytes[i] ?? 0);
-  }
-  return mismatch === 0;
 }

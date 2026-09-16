@@ -7,13 +7,13 @@ import {
 import { authorizedFetch } from "./management-fetch";
 import { wrapOAuthState } from "./oauth-state";
 import {
-  DELIVERY_TIMEOUT_MS,
-  DEREGISTER_TIMEOUT_MS,
-  ROUTER_HEADER_CONNECTION,
-  joinTargetUrl,
-  managementSubscriberPath,
-  publicIngressUrl
-} from "./shared";
+  CONNECTION_RETRY_MAX_DELAY_MS,
+  sleepUntilAborted,
+  tunnelConnectionAbortedError
+} from "./connection-retry";
+import { managementSubscriberPath, publicIngressUrl, joinTargetUrl } from "./ingress-urls";
+import { ROUTER_HEADER_CONNECTION } from "./router-headers";
+import { DEREGISTER_TIMEOUT_MS, DELIVERY_TIMEOUT_MS } from "./subscriber-lifetime";
 import {
   TUNNEL_HELLO_TIMEOUT_MS,
   TUNNEL_PING,
@@ -33,10 +33,9 @@ import {
   tunnelSubprotocol,
   type TunnelRequestMessage
 } from "./tunnel-protocol";
-import type { Connection } from "./types";
+import type { Connection } from "./dev-router-types";
 
-const MAX_RETRY_DELAY_MS = 30_000;
-
+/** Reverse-tunnel sidecar: outbound WebSocket that serves local HTTP. */
 export class TunnelConnection implements Connection {
   subscriberId = "";
   readonly routeId: string;
@@ -150,7 +149,7 @@ export class TunnelConnection implements Connection {
       }
     }
     this.closed.abort();
-    this.failReady(new Error("connection aborted"));
+    this.failReady(tunnelConnectionAbortedError());
   }
 
   async wrapOAuthState(inner?: string): Promise<string> {
@@ -188,11 +187,13 @@ export class TunnelConnection implements Connection {
       } catch (error) {
         this.noteFailure(error);
         if (this.disconnected || this.closed.signal.aborted) {
-          this.failReady(error instanceof Error ? error : new Error("connection aborted"));
+          this.failReady(error instanceof Error ? error : tunnelConnectionAbortedError());
           return;
         }
-        await sleep(delay, this.closed.signal).catch(() => undefined);
-        delay = Math.min(delay * 2, MAX_RETRY_DELAY_MS);
+        await sleepUntilAborted(delay, this.closed.signal, tunnelConnectionAbortedError).catch(
+          () => undefined
+        );
+        delay = Math.min(delay * 2, CONNECTION_RETRY_MAX_DELAY_MS);
       }
     }
   }
@@ -250,7 +251,7 @@ export class TunnelConnection implements Connection {
 
       const onAbort = (): void => {
         cleanup();
-        reject(new Error("connection aborted"));
+        reject(tunnelConnectionAbortedError());
       };
 
       const onMessage = (data: WebSocket.RawData): void => {
@@ -439,7 +440,7 @@ function waitForOpen(socket: WebSocket, signal: AbortSignal): Promise<void> {
     const onAbort = (): void => {
       cleanup();
       socket.terminate();
-      reject(new Error("connection aborted"));
+      reject(tunnelConnectionAbortedError());
     };
     const onOpen = (): void => {
       cleanup();
@@ -477,20 +478,5 @@ function closeSocket(socket: WebSocket): Promise<void> {
       resolve();
     });
     socket.close(1000, "client disconnect");
-  });
-}
-
-function sleep(ms: number, signal: AbortSignal): Promise<void> {
-  return new Promise((resolve, reject) => {
-    if (signal.aborted) {
-      reject(new Error("connection aborted"));
-      return;
-    }
-    const timer = setTimeout(resolve, ms);
-    const onAbort = (): void => {
-      clearTimeout(timer);
-      reject(new Error("connection aborted"));
-    };
-    signal.addEventListener("abort", onAbort, { once: true });
   });
 }

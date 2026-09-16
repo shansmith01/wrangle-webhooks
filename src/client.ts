@@ -3,19 +3,18 @@ import {
   nextConnectionFailure,
   type ConnectionStateReason
 } from "./connection-state";
+import {
+  publicConnectionAbortedError,
+  retryUntilAborted,
+  RetryableConnectionError
+} from "./connection-retry";
 import { authorizedFetch } from "./management-fetch";
 import { wrapOAuthState } from "./oauth-state";
-import {
-  DEREGISTER_TIMEOUT_MS,
-  HEARTBEAT_INTERVAL_MS,
-  TargetBaseUrlError,
-  isAllowedEnvironmentId,
-  isAllowedRouteId,
-  managementSubscriberPath,
-  publicIngressUrl,
-  validateLocalUrl,
-  validateTargetBaseUrl
-} from "./shared";
+import { managementSubscriberPath, publicIngressUrl } from "./ingress-urls";
+import { isAllowedEnvironmentId, isAllowedRouteId } from "./route-id";
+import { DEREGISTER_TIMEOUT_MS, HEARTBEAT_INTERVAL_MS } from "./subscriber-lifetime";
+import { TargetBaseUrlError, validateTargetBaseUrl } from "./target-base-url";
+import { validateLocalUrl } from "./local-url";
 import { TunnelConnection } from "./tunnel-client";
 import { managementOAuthStatePath } from "./tunnel-protocol";
 import type {
@@ -23,7 +22,7 @@ import type {
   Connection,
   DevRouterClientOptions,
   RegisterSubscriberResponse
-} from "./types";
+} from "./dev-router-types";
 
 export { startControlServer, CONTROL_DEFAULT_PORT } from "./control-server";
 export type { ControlServer, ControlServerOptions } from "./control-server";
@@ -32,10 +31,9 @@ export { deriveRouteSecret } from "./credentials";
 export { detectPublicDevUrl, resolveDevPort } from "./detect-url";
 export type { DetectedPublicUrl } from "./detect-url";
 export { wrapOAuthState } from "./oauth-state";
-export type { Connection, ConnectOptions, DevRouterClientOptions } from "./types";
+export type { Connection, ConnectOptions, DevRouterClientOptions } from "./dev-router-types";
 
-const MAX_RETRY_DELAY_MS = 30_000;
-
+/** Sidecar that registers a subscriber on the shared Worker and keeps it alive. */
 export class DevRouterClient {
   readonly routerUrl: string;
   readonly secret: string;
@@ -166,7 +164,11 @@ class PublicConnection implements Connection {
 
   private async runStart(): Promise<void> {
     try {
-      const registered = await retry(() => this.register(), this.closed.signal);
+      const registered = await retryUntilAborted(
+        () => this.register(),
+        this.closed.signal,
+        publicConnectionAbortedError
+      );
       this.subscriberId = registered.subscriberId;
       this.forwardToken = registered.forwardToken;
       this.connectionToken = registered.connectionToken;
@@ -174,7 +176,7 @@ class PublicConnection implements Connection {
       this.scheduleHeartbeat();
       this.markReady();
     } catch (error) {
-      this.failReady(error instanceof Error ? error : new Error("connection aborted"));
+      this.failReady(error instanceof Error ? error : publicConnectionAbortedError());
     }
   }
 
@@ -200,7 +202,7 @@ class PublicConnection implements Connection {
       }
     }
     this.closed.abort();
-    this.failReady(new Error("connection aborted"));
+    this.failReady(publicConnectionAbortedError());
   }
 
   async wrapOAuthState(inner?: string): Promise<string> {
@@ -248,7 +250,7 @@ class PublicConnection implements Connection {
         undefined,
         response.status
       );
-      throw new RetryableError(`registration failed: ${response.status}`);
+      throw new RetryableConnectionError(`registration failed: ${response.status}`);
     }
     const payload = (await response.json()) as RegisterSubscriberResponse;
     return {
@@ -280,7 +282,7 @@ class PublicConnection implements Connection {
         this.forwardToken = registered.forwardToken;
         this.connectionToken = registered.connectionToken;
       } else if (!response.ok) {
-        throw new RetryableError(`heartbeat failed: ${response.status}`);
+        throw new RetryableConnectionError(`heartbeat failed: ${response.status}`);
       }
     } catch (error) {
       if (this.disconnected) {
@@ -308,46 +310,6 @@ class PublicConnection implements Connection {
       }
     );
   }
-}
-
-class RetryableError extends Error {
-  constructor(message: string) {
-    super(message);
-    this.name = "RetryableError";
-  }
-}
-
-async function retry<T>(fn: () => Promise<T>, signal: AbortSignal): Promise<T> {
-  let delay = 1_000;
-  for (;;) {
-    if (signal.aborted) {
-      throw new Error("connection aborted");
-    }
-    try {
-      return await fn();
-    } catch (error) {
-      if (signal.aborted) {
-        throw error;
-      }
-      await sleep(delay, signal);
-      delay = Math.min(delay * 2, MAX_RETRY_DELAY_MS);
-    }
-  }
-}
-
-function sleep(ms: number, signal: AbortSignal): Promise<void> {
-  return new Promise((resolve, reject) => {
-    if (signal.aborted) {
-      reject(new Error("connection aborted"));
-      return;
-    }
-    const timer = setTimeout(resolve, ms);
-    const onAbort = (): void => {
-      clearTimeout(timer);
-      reject(new Error("connection aborted"));
-    };
-    signal.addEventListener("abort", onAbort, { once: true });
-  });
 }
 
 function resolveRouteId(options: ConnectOptions): string {

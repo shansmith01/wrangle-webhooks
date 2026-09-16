@@ -1,18 +1,10 @@
-import { describe, expect, it } from "vitest";
+import { expect, test } from "vitest";
 import { resolveCliCommand } from "../../src/cli-command";
 
-describe("resolveCliCommand", () => {
-  it("defaults to connect", () => {
-    expect(resolveCliCommand([])).toBe("connect");
-  });
-
-  it("accepts connect and token", () => {
-    expect(resolveCliCommand(["connect"])).toBe("connect");
-    expect(resolveCliCommand(["token"])).toBe("token");
-  });
-
-  it("ignores a redundant binary name from npx github installs", () => {
-    expect(resolveCliCommand(["dev-router", "connect"])).toBe("connect");
-    expect(resolveCliCommand(["dev-router"])).toBe("connect");
-  });
+test("resolveCliCommand defaults to connect and ignores a redundant npx binary name", () => {
+  expect(resolveCliCommand([])).toBe("connect");
+  expect(resolveCliCommand(["connect"])).toBe("connect");
+  expect(resolveCliCommand(["token"])).toBe("token");
+  expect(resolveCliCommand(["dev-router", "connect"])).toBe("connect");
+  expect(resolveCliCommand(["dev-router"])).toBe("connect");
 });

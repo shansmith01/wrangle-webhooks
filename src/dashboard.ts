@@ -1,11 +1,13 @@
-import type { Subscriber } from "./types";
+import type { Subscriber } from "./dev-router-types";
 
+/** HTML dashboard snapshot of active routes and subscribers. */
 export interface DashboardRoute {
   routeId: string;
   publicPath: string;
   subscribers: Subscriber[];
 }
 
+/** JSON status payload for `/dashboard/status`. */
 export interface DashboardStatus {
   ok: true;
   secretConfigured: boolean;
@@ -15,6 +17,7 @@ export interface DashboardStatus {
   routes: DashboardRoute[];
 }
 
+/** Build the dashboard status JSON from the current route list. */
 export function dashboardStatus(
   secretConfigured: boolean,
   routes: DashboardRoute[]

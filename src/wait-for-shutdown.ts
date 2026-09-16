@@ -1,3 +1,4 @@
+/** Hold the CLI process open until SIGINT or SIGTERM. */
 export function waitForShutdownSignal(): Promise<void> {
   return new Promise((resolve) => {
     // Heartbeats are unref'd so a programmatic client does not pin the process.

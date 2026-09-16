@@ -1,20 +1,23 @@
 import {
-  DELIVERY_TIMEOUT_MS,
+  DELIVERY_TIMEOUT_MS
+} from "./subscriber-lifetime";
+import {
   ROUTER_HEADER_REQUEST_ID,
   ROUTER_HEADER_ROUTE,
   ROUTER_HEADER_SUBSCRIBER,
   ROUTER_HEADER_TOKEN,
-  joinTargetUrl,
   shouldForwardHeader
-} from "./shared";
+} from "./router-headers";
+import { joinTargetUrl } from "./ingress-urls";
 import {
   TUNNEL_MAX_BODY_BYTES,
   encodeBody,
   serializeHeaders,
   type HeaderPair
 } from "./tunnel-protocol";
-import type { ProxyResult, Subscriber } from "./types";
+import type { ProxyResult, Subscriber } from "./dev-router-types";
 
+/** Copy incoming headers onto the forwarded subscriber request, plus router metadata. */
 export function buildForwardHeaders(options: {
   incoming: Headers;
   routeId: string;
@@ -52,6 +55,7 @@ export function buildForwardHeaders(options: {
   return headers;
 }
 
+/** Fetch the remaining path on a public-target subscriber. */
 export async function deliverToSubscriber(options: {
   subscriber: Subscriber;
   remainingPath: string;
@@ -77,6 +81,7 @@ export async function deliverToSubscriber(options: {
   return fetch(url, init);
 }
 
+/** Capture a subscriber HTTP response for OAuth callback proxying. */
 export async function captureSubscriberResponse(response: Response): Promise<ProxyResult> {
   const body = await response.arrayBuffer();
   if (body.byteLength > TUNNEL_MAX_BODY_BYTES) {
@@ -94,6 +99,7 @@ export async function captureSubscriberResponse(response: Response): Promise<Pro
   };
 }
 
+/** Drop hop-by-hop headers from a subscriber response before proxying it. */
 export function filterResponseHeaders(pairs: HeaderPair[]): HeaderPair[] {
   return pairs.filter(([name]) => shouldForwardHeader(name));
 }

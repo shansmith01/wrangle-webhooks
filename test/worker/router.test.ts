@@ -1,9 +1,13 @@
 import { deriveRouteSecret } from "../../src/credentials";
-import { ROUTER_HEADER_CONNECTION } from "../../src/shared";
+import { RouteDurableObject } from "../../src/durable-object";
+import { OAUTH_STATE_TTL_MS, wrapOAuthState } from "../../src/oauth-state";
+import { durableObjectNameForIndex, durableObjectNameForRoute } from "../../src/route-id";
+import { ROUTER_HEADER_CONNECTION } from "../../src/router-headers";
 import {
   createExecutionContext,
   env,
   fetchMock,
+  runInDurableObject,
   waitOnExecutionContext
 } from "cloudflare:test";
 import { afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
@@ -14,8 +18,11 @@ beforeAll(() => {
   fetchMock.disableNetConnect();
 });
 
-beforeEach(() => {
+beforeEach(async () => {
   fetchMock.assertNoPendingInterceptors();
+  expect(
+    await env.ROUTER_INDEX.getByName(durableObjectNameForIndex()).listRoutes()
+  ).toEqual([]);
 });
 
 afterEach(() => {
@@ -44,6 +51,7 @@ async function dashboardHeaders(extra?: HeadersInit): Promise<Headers> {
   expect(setCookie).toContain("Path=/dashboard");
   expect(setCookie).toContain("HttpOnly");
   expect(setCookie).toContain("SameSite=Strict");
+  expect(setCookie).toContain("Secure");
   const cookie = (setCookie ?? "").split(";", 1)[0];
   const headers = new Headers(extra);
   headers.set("Cookie", cookie);
@@ -113,8 +121,8 @@ describe("management API", () => {
     expect(removed.status).toBe(204);
   });
 
-  it("rejects http target URLs", async () => {
-    const response = await fetchWorker(
+  it("rejects invalid registration payloads", async () => {
+    const http = await fetchWorker(
       "https://dev-webhooks.example.com/_router/routes/invalid-target/subscribers",
       {
         method: "POST",
@@ -122,7 +130,77 @@ describe("management API", () => {
         body: JSON.stringify({ targetBaseUrl: "http://dev-a.example" })
       }
     );
-    expect(response.status).toBe(400);
+    expect(http.status).toBe(400);
+    expect(await http.json()).toMatchObject({ error: "invalid_target_base_url" });
+
+    const credentials = await fetchWorker(
+      "https://dev-webhooks.example.com/_router/routes/invalid-target/subscribers",
+      {
+        method: "POST",
+        headers: authHeaders({ "Content-Type": "application/json" }),
+        body: JSON.stringify({
+          targetBaseUrl: "https://user:pass@dev-a.example"
+        })
+      }
+    );
+    expect(credentials.status).toBe(400);
+    expect(await credentials.json()).toMatchObject({ error: "invalid_target_base_url" });
+
+    const environmentId = await fetchWorker(
+      "https://dev-webhooks.example.com/_router/routes/invalid-target/subscribers",
+      {
+        method: "POST",
+        headers: authHeaders({ "Content-Type": "application/json" }),
+        body: JSON.stringify({
+          targetBaseUrl: "https://dev-a.example",
+          environmentId: "has space"
+        })
+      }
+    );
+    expect(environmentId.status).toBe(400);
+    expect(await environmentId.json()).toEqual({ error: "invalid_environment_id" });
+
+    const json = await fetchWorker(
+      "https://dev-webhooks.example.com/_router/routes/invalid-json/subscribers",
+      {
+        method: "POST",
+        headers: authHeaders({ "Content-Type": "application/json" }),
+        body: "not-json"
+      }
+    );
+    expect(json.status).toBe(400);
+    expect(await json.json()).toEqual({ error: "invalid_json" });
+  });
+
+  it("drops a public subscriber after TTL without a heartbeat", async () => {
+    const created = await register("ttl-expire", "https://dev-ttl.example");
+    fetchMock
+      .get("https://dev-ttl.example")
+      .intercept({ path: /\/api\/hooks/, method: "POST" })
+      .reply(200, "ok");
+    const accepted = await fetchWorker(
+      "https://dev-webhooks.example.com/ttl-expire/api/hooks",
+      { method: "POST", body: "{}" }
+    );
+    expect(accepted.status).toBe(202);
+
+    const stub = env.ROUTE.getByName(durableObjectNameForRoute("ttl-expire"));
+    await runInDurableObject(stub, async (instance: RouteDurableObject, state) => {
+      state.storage.sql.exec("UPDATE subscribers SET expires_at = 0");
+      await instance.alarm();
+    });
+
+    const heartbeat = await fetchWorker(
+      `https://dev-webhooks.example.com/_router/routes/ttl-expire/subscribers/${created.subscriberId}/heartbeat`,
+      { method: "POST", headers: authHeaders() }
+    );
+    expect(heartbeat.status).toBe(404);
+    expect(await heartbeat.json()).toEqual({ error: "subscriber_not_found" });
+
+    const remaining = await runInDurableObject(stub, async (instance: RouteDurableObject) => {
+      return (await instance.getActiveSubscribers()).length;
+    });
+    expect(remaining).toBe(0);
   });
 });
 
@@ -133,8 +211,9 @@ describe("dashboard", () => {
     expect(html.headers.get("www-authenticate")).toBeNull();
     expect(html.headers.get("content-security-policy")).toMatch(/default-src 'none'/);
     const page = await html.text();
-    expect(page).toContain("Dashboard password");
-    expect(page).not.toContain("Environment id");
+    expect(page).toContain('action="/dashboard/login"');
+    expect(page).toContain('name="password"');
+    expect(page).not.toContain('id="routes"');
 
     const json = await fetchWorker("https://dev-webhooks.example.com/dashboard/status");
     expect(json.status).toBe(401);
@@ -146,7 +225,7 @@ describe("dashboard", () => {
       headers: authHeaders()
     });
     expect(bearer.status).toBe(200);
-    expect(await bearer.text()).toContain("Dashboard password");
+    expect(await bearer.text()).toContain('action="/dashboard/login"');
 
     const basic = await fetchWorker("https://dev-webhooks.example.com/dashboard/status", {
       headers: {
@@ -157,15 +236,27 @@ describe("dashboard", () => {
   });
 
   it("serves HTML after a password login cookie", async () => {
+    const headers = await dashboardHeaders();
     const response = await fetchWorker("https://dev-webhooks.example.com/dashboard", {
-      headers: await dashboardHeaders()
+      headers
     });
     expect(response.status).toBe(200);
     expect(response.headers.get("content-type")).toMatch(/text\/html/);
     const html = await response.text();
-    expect(html).toContain("Dev router");
-    expect(html).toContain("No active connections.");
-    expect(html).toContain("Environment id");
+    expect(html).toContain('action="/dashboard/logout"');
+    expect(html).toContain("/dashboard/status");
+    expect(html).toContain('id="routes"');
+
+    const status = await fetchWorker("https://dev-webhooks.example.com/dashboard/status", {
+      headers
+    });
+    expect(status.status).toBe(200);
+    expect(await status.json()).toMatchObject({
+      ok: true,
+      routeCount: 0,
+      subscriberCount: 0,
+      routes: []
+    });
   });
 
   it("does not embed subscriber JSON in a script tag", async () => {
@@ -211,9 +302,12 @@ describe("dashboard", () => {
     };
     expect(body.ok).toBe(true);
     expect(body.secretConfigured).toBe(true);
-    expect(body.routeCount).toBeGreaterThanOrEqual(1);
-    expect(body.subscriberCount).toBeGreaterThanOrEqual(1);
-    const route = body.routes.find((item) => item.routeId === "dash-route");
+    expect(body.routeCount).toBe(1);
+    expect(body.subscriberCount).toBe(1);
+    expect(body.routes).toHaveLength(1);
+    const route = body.routes[0];
+    expect(route?.routeId).toBe("dash-route");
+    expect(route?.subscribers).toHaveLength(1);
     expect(route?.subscribers[0]?.id).toBe(created.subscriberId);
     expect(route?.subscribers[0]?.transport).toBe("public");
     expect(route?.subscribers[0]?.targetBaseUrl).toBe("https://dev-dash.example/");
@@ -235,7 +329,7 @@ describe("dashboard", () => {
     const response = await fetchWorker("https://dev-webhooks.example.com/dashboard");
     expect(response.status).toBe(200);
     expect(response.headers.get("content-type")).toMatch(/text\/html/);
-    expect(await response.text()).toContain("Dashboard password");
+    expect(await response.text()).toContain('action="/dashboard/login"');
   });
 });
 
@@ -249,14 +343,14 @@ describe("public routing", () => {
   });
 
   it("accepts a public request and fans out to every subscriber independently", async () => {
-    await register("fanout-route", "https://dev-a.example");
-    await register("fanout-route", "https://dev-b.example");
+    await register("fanout-route", "https://dev-a.example/dev-ingress");
+    await register("fanout-route", "https://dev-b.example/dev-ingress");
 
     let capturedHeaders: Record<string, string | string[]> | undefined;
     fetchMock
       .get("https://dev-a.example")
       .intercept({
-        path: /\/api\/hooks\/payment/,
+        path: (path) => path.includes("/dev-ingress/api/hooks/payment"),
         method: "POST",
         headers: (headers) => {
           capturedHeaders = headers;
@@ -266,11 +360,14 @@ describe("public routing", () => {
       .reply(200, "ok");
     fetchMock
       .get("https://dev-b.example")
-      .intercept({ path: /\/api\/hooks\/payment/, method: "POST" })
+      .intercept({
+        path: (path) => path.includes("/dev-ingress/api/hooks/payment"),
+        method: "POST"
+      })
       .reply(500, "nope");
 
     const response = await fetchWorker(
-      "https://dev-webhooks.example.com/fanout-route/api/hooks/payment?id=123",
+      "https://dev-webhooks.example.com/fanout-route/api/hooks/payment?id=1&id=2",
       {
         method: "POST",
         headers: {
@@ -302,6 +399,9 @@ describe("public routing", () => {
     expect(cookie).toBeUndefined();
     const signature = headerBag["x-signature"] ?? headerBag["X-Signature"];
     expect(signature).toBe("goki-hmac");
+    const stripe =
+      headerBag["stripe-signature"] ?? headerBag["Stripe-Signature"];
+    expect(stripe).toBe("t=1,v1=sig");
   });
 
   it("does not forward the reserved management namespace", async () => {
@@ -341,6 +441,12 @@ describe("public routing", () => {
           "Set-Cookie": "session=abc; Path=/"
         }
       });
+    fetchMock
+      .get("https://dev-oauth-a.example")
+      .intercept({ path: /\/api\/auth\/callback\/google/, method: "GET" })
+      .reply(302, "redirect-google", {
+        headers: { Location: "https://app.example/google" }
+      });
 
     const bind = await fetchWorker(
       `https://dev-webhooks.example.com/_router/routes/oauth-route/subscribers/${first.subscriberId}/oauth-states`,
@@ -358,6 +464,12 @@ describe("public routing", () => {
     expect(response.status).toBe(302);
     expect(response.headers.get("Location")).toBe("https://app.example/a");
     expect(response.headers.get("Set-Cookie")).toBeNull();
+
+    const nested = await fetchWorker(
+      "https://dev-webhooks.example.com/oauth-route/api/auth/callback/google?code=one-time&state=orb-a-state"
+    );
+    expect(nested.status).toBe(302);
+    expect(nested.headers.get("Location")).toBe("https://app.example/google");
   });
 
   it("does not fan an uncorrelated OAuth callback to every subscriber", async () => {
@@ -383,6 +495,79 @@ describe("public routing", () => {
     );
     expect(response.status).toBe(202);
     expect(await response.json()).toEqual({ accepted: true });
+  });
+
+  it("routes a form-encoded OAuth callback and rejects an expired signed state", async () => {
+    const first = await register("form-oauth", "https://dev-form-a.example");
+    await register("form-oauth", "https://dev-form-b.example");
+
+    fetchMock
+      .get("https://dev-form-a.example")
+      .intercept({ path: /\/oauth\/callback/, method: "POST" })
+      .reply(302, "redirect-a", {
+        headers: { Location: "https://app.example/form" }
+      });
+    fetchMock
+      .get("https://dev-form-a.example")
+      .intercept({ path: /\/custom\/redirect/, method: "GET" })
+      .reply(302, "redirect-signed", {
+        headers: { Location: "https://app.example/signed" }
+      });
+
+    const bind = await fetchWorker(
+      `https://dev-webhooks.example.com/_router/routes/form-oauth/subscribers/${first.subscriberId}/oauth-states`,
+      {
+        method: "POST",
+        headers: authHeaders({ "Content-Type": "application/json" }),
+        body: JSON.stringify({ state: "form-orb-state" })
+      }
+    );
+    expect(bind.status).toBe(200);
+
+    const routed = await fetchWorker(
+      "https://dev-webhooks.example.com/form-oauth/oauth/callback",
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/x-www-form-urlencoded" },
+        body: new URLSearchParams({
+          code: "one-time",
+          state: "form-orb-state"
+        }).toString()
+      }
+    );
+    expect(routed.status).toBe(302);
+    expect(routed.headers.get("Location")).toBe("https://app.example/form");
+
+    const signed = await wrapOAuthState({
+      secret: env.DEV_ROUTER_SECRET,
+      subscriberId: first.subscriberId,
+      routeId: "form-oauth"
+    });
+    const custom = await fetchWorker(
+      `https://dev-webhooks.example.com/form-oauth/custom/redirect?code=abc&state=${encodeURIComponent(signed)}`
+    );
+    expect(custom.status).toBe(302);
+    expect(custom.headers.get("Location")).toBe("https://app.example/signed");
+
+    const expired = await wrapOAuthState({
+      secret: env.DEV_ROUTER_SECRET,
+      subscriberId: first.subscriberId,
+      routeId: "form-oauth",
+      now: Date.now() - OAUTH_STATE_TTL_MS - 1
+    });
+    const rejected = await fetchWorker(
+      "https://dev-webhooks.example.com/form-oauth/oauth/callback",
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/x-www-form-urlencoded" },
+        body: new URLSearchParams({
+          code: "late",
+          state: expired
+        }).toString()
+      }
+    );
+    expect(rejected.status).toBe(409);
+    expect(await rejected.json()).toMatchObject({ error: "oauth_unroutable" });
   });
 });
 
@@ -453,6 +638,59 @@ describe("reverse tunnel", () => {
       "https://dev-webhooks.example.com/orb-close/api/hooks"
     );
     expect(response.status).toBe(404);
+  });
+
+  it("accepts a public webhook and fans it out over the reverse tunnel", async () => {
+    const { ws, hello } = await openTunnel("orb-hooks");
+    const requestMessage = waitForJson(ws);
+    const ctx = createExecutionContext();
+    const publicPromise = worker.fetch(
+      new Request("https://dev-webhooks.example.com/orb-hooks/api/hooks/payment", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "X-Signature": "goki-hmac"
+        },
+        body: '{"ok":true}'
+      }) as Request<unknown, IncomingRequestCfProperties>,
+      env,
+      ctx
+    );
+
+    const incoming = await requestMessage;
+    expect(incoming.type).toBe("request");
+    expect(incoming.method).toBe("POST");
+    expect(incoming.path).toBe("/api/hooks/payment");
+    const headers = incoming.headers as [string, string][];
+    expect(headers.some(([name]) => name.toLowerCase() === "x-dev-router-secret")).toBe(
+      false
+    );
+    expect(
+      headers.some(
+        ([name, value]) =>
+          name.toLowerCase() === "x-dev-router-token" && value === hello.forwardToken
+      )
+    ).toBe(true);
+    expect(
+      headers.some(
+        ([name, value]) => name.toLowerCase() === "x-signature" && value === "goki-hmac"
+      )
+    ).toBe(true);
+
+    ws.send(
+      JSON.stringify({
+        type: "response",
+        id: incoming.id,
+        status: 500,
+        headers: [["Content-Type", "text/plain"]],
+        body: "nope"
+      })
+    );
+    const response = await publicPromise;
+    expect(response.status).toBe(202);
+    expect(await response.json()).toEqual({ accepted: true });
+    await waitOnExecutionContext(ctx);
+    ws.close(1000, "done");
   });
 });
 

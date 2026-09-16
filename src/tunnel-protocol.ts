@@ -6,6 +6,8 @@ export const TUNNEL_MAX_BODY_BYTES = 768 * 1024;
 export const TUNNEL_HELLO_TIMEOUT_MS = 10_000;
 export const TUNNEL_PING_INTERVAL_MS = 30_000;
 export const TUNNEL_PONG_DEADLINE_MS = 75_000;
+/** Milliseconds without a tunnel ping/pong before the Worker closes the socket. */
+export const TUNNEL_STALE_MS = 90_000;
 
 export type HeaderPair = [string, string];
 

@@ -3,7 +3,8 @@ import { resolveCliCommand } from "./cli-command";
 import { DevRouterClient, deriveRouteSecret, startControlServer } from "./client";
 import { CONTROL_DEFAULT_PORT } from "./control-server";
 import { detectPublicDevUrl, resolveDevPort } from "./detect-url";
-import { forwardingDisplayUrl, isAllowedEnvironmentId, isAllowedRouteId } from "./shared";
+import { forwardingDisplayUrl } from "./ingress-urls";
+import { isAllowedEnvironmentId, isAllowedRouteId } from "./route-id";
 import { waitForShutdownSignal } from "./wait-for-shutdown";
 
 async function main(): Promise<void> {

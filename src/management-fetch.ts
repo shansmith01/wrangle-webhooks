@@ -1,3 +1,4 @@
+/** Fetch a management path with a Bearer operator or connection token. */
 export async function authorizedFetch(
   routerUrl: string,
   secret: string,

@@ -12,21 +12,18 @@ import {
   randomConnectionToken
 } from "./credentials";
 import { OAUTH_STATE_MAX_LENGTH, OAUTH_STATE_TTL_MS, unwrapOAuthStateForRoute } from "./oauth-state";
-import {
-  DELIVERY_TIMEOUT_MS,
-  ROUTER_HEADER_CONNECTION,
-  SUBSCRIBER_TTL_MS,
-  TUNNEL_STALE_MS,
-  durableObjectNameForIndex,
-  isAllowedEnvironmentId,
-  validateTargetBaseUrl
-} from "./shared";
+import { randomHex } from "./random-hex";
+import { ROUTER_HEADER_CONNECTION } from "./router-headers";
+import { durableObjectNameForIndex, isAllowedEnvironmentId } from "./route-id";
+import { DELIVERY_TIMEOUT_MS, SUBSCRIBER_TTL_MS } from "./subscriber-lifetime";
+import { validateTargetBaseUrl } from "./target-base-url";
 import {
   TUNNEL_MAX_BODY_BYTES,
   TUNNEL_PING,
   TUNNEL_PONG,
   TUNNEL_PROTOCOL_VERSION,
   TUNNEL_SUBPROTOCOL_PREFIX,
+  TUNNEL_STALE_MS,
   decodeBody,
   encodeBody,
   headersFromPairs,
@@ -39,7 +36,7 @@ import {
   type TunnelRequestMessage,
   type TunnelResponseMessage
 } from "./tunnel-protocol";
-import type { IngressPayload, ProxyResult, Subscriber } from "./types";
+import type { IngressPayload, ProxyResult, Subscriber } from "./dev-router-types";
 
 interface SubscriberRow {
   id: string;
@@ -68,6 +65,7 @@ interface PendingTunnel {
   timer: ReturnType<typeof setTimeout>;
 }
 
+/** Per-route Durable Object: subscribers, OAuth bindings, and tunnel sockets. */
 export class RouteDurableObject extends DurableObject<Env> {
   private readonly pending = new Map<string, PendingTunnel>();
 
@@ -930,10 +928,4 @@ function selectedTunnelProtocol(header: string | null): string | undefined {
     }
   }
   return undefined;
-}
-
-function randomHex(bytes: number): string {
-  const arr = new Uint8Array(bytes);
-  crypto.getRandomValues(arr);
-  return [...arr].map((byte) => byte.toString(16).padStart(2, "0")).join("");
 }
