@@ -45,11 +45,7 @@ export function buildForwardHeaders(options: {
   headers.set("X-Forwarded-Proto", options.publicProto);
 
   if (options.clientIp) {
-    const existing = options.incoming.get("X-Forwarded-For");
-    headers.set(
-      "X-Forwarded-For",
-      existing ? `${existing}, ${options.clientIp}` : options.clientIp
-    );
+    headers.set("X-Forwarded-For", options.clientIp);
   }
 
   return headers;

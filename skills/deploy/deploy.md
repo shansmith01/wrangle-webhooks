@@ -1,6 +1,6 @@
 # Deploy the shared router
 
-Deploy the Worker once from **this GitHub repository**. The npm package `@powerboard/dev-router` is the client only; it does not deploy the Worker. Install that client in each project that needs a stable public URL. Bind a hostname such as `dev-webhooks.example.com` to the Worker in the Cloudflare dashboard. Every remote environment then sets `DEV_ROUTER_URL` to that origin.
+Deploy the Worker once from **this GitHub repository**. The npm package `@powerboard/dev-router` is the client only; it does not deploy the Worker. Install that client in each project that needs a stable public URL. Bind a **Custom Domain** such as `dev-webhooks.example.com` on a Cloudflare zone (not only `*.workers.dev`). Every remote environment then sets `DEV_ROUTER_URL` to that origin. Zone WAF custom rules and Bot Fight Mode can block scanner probes (`*.php`, `/credentials.json`, `/.env`) before the Worker runs. The Worker also cheap-rejects those paths (no Durable Object, no inbound log) so `workers.dev` and missed WAF rules still do not fan them out.
 
 Subscribers must be able to reach this origin over HTTPS (public-target register/heartbeat) and WSS (reverse tunnel). Allowlist this hostname in locked-down Cloud Agent / VPC egress policies. The Worker fetches public-target `https://` origins; reverse-tunnel subscribers are reached only over the client’s outbound WebSocket.
 

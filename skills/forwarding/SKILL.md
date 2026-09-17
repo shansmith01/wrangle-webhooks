@@ -5,8 +5,8 @@ description: >
   when explaining public URLs, routeId prefixes, webhook 202 fan-out, OAuth
   subscriber responses, replica mode (OAuth each new environment before
   webhook follow-up), state correlation, header stripping, X-Dev-Router-Token,
-  reverse tunnels, 10s delivery timeout, or route_not_found. Do not load this
-  to install the sidecar or deploy the Worker.
+  reverse tunnels, 10s delivery timeout, route_not_found, oauth_callback_incomplete, or scanner probes.
+  Do not load this to install the sidecar or deploy the Worker.
 metadata:
   purpose: Guidance for the public ingress path and what subscribers actually receive.
   type: core
@@ -20,7 +20,10 @@ sources:
   - shansmith01/wrangle-webhooks:src/oauth-state.ts
   - shansmith01/wrangle-webhooks:src/router-headers.ts
   - shansmith01/wrangle-webhooks:src/ingress-urls.ts
+  - shansmith01/wrangle-webhooks:src/ingress-body.ts
   - shansmith01/wrangle-webhooks:src/public-ingress.ts
+  - shansmith01/wrangle-webhooks:src/scanner-probe.ts
+  - shansmith01/wrangle-webhooks:src/router-index.ts
 ---
 
 # Request forwarding contract
@@ -53,11 +56,11 @@ Fan-out runs in `waitUntil`. The public caller gets `202` `{ "accepted": true }`
 
 ### Return the subscriber response for OAuth
 
-OAuth callbacks wait for one subscriber and return its status, `Location`, and body. Classification is the callback path (`/oauth/callback`, `/auth/callback`, or nested `/api/auth/callback/...`) or a signed `wrapOAuthState()` `dr1.` value plus `code`/`error`. Arbitrary `?state=&code=` on other paths is webhook fan-out. `Set-Cookie` is not copied onto the Worker host. Correlate with `wrapOAuthState()`, `bindOAuthState()`, or `POST http://127.0.0.1:8790/oauth-states` from the app process. A single subscriber on a callback path is enough. Multiple subscribers without correlation return `409 oauth_unroutable`.
+OAuth callbacks wait for one subscriber and return its status, `Location`, and body. Classification is a callback path (`/oauth/callback`, `/auth/callback`, `/oolio/callback`, or nested forms such as `/api/auth/callback/...` and `/api/integrations/oolio/callback`) **plus** `code` or `error` in the query or form body, or a signed `wrapOAuthState()` `dr1.` value plus `code`/`error`. Only GET and POST are proxied; other methods return `405` `oauth_method_not_allowed`. A callback path with neither `code` nor `error` returns `404` `oauth_callback_incomplete` with no proxy and no fan-out. Arbitrary `?state=&code=` on other paths is webhook fan-out. Remaining paths with a `..` segment after decode return `404` `route_not_found` with no forwarding. Bodies above 768 KiB return `413` `request_too_large` before the Worker buffers them. `Set-Cookie` is not copied onto the Worker host. Correlate with `wrapOAuthState()`, `bindOAuthState()`, or `POST http://127.0.0.1:8790/oauth-states` from the app process. A single subscriber on a complete callback is enough. Multiple subscribers without correlation return `409 oauth_unroutable`.
 
 ### Preserve method, body, query, and forwardable headers
 
-Hop-by-hop headers are dropped, including `Authorization` and `Cookie`. OAuth responses still return status, `Location`, and body; `Set-Cookie` is not copied onto the Worker host. Reverse-tunnel `fetch()` derives `Host` from `localUrl`; `X-Forwarded-Host` keeps the public host so virtual-host proxies such as Portless can route. The Worker adds `X-Dev-Router-Route`, `X-Dev-Router-Subscriber`, `X-Dev-Router-Request-Id`, `X-Dev-Router-Token` (per-connection credential), and `X-Forwarded-*` when a client IP exists. It does not send `X-Dev-Router-Secret`.
+Hop-by-hop headers are dropped, including `Authorization` and `Cookie`. Client-spoofed forwarding headers (`X-Original-URL`, `X-Rewrite-URL`, `X-Real-IP`, inbound `X-Forwarded-*`) are dropped too; the Worker overwrites `X-Forwarded-Host` / `X-Forwarded-Proto` / `X-Forwarded-For` from the public host and `CF-Connecting-IP`. OAuth responses still return status, `Location`, and body; `Set-Cookie` is not copied onto the Worker host. Reverse-tunnel `fetch()` derives `Host` from `localUrl`; `X-Forwarded-Host` keeps the public host so virtual-host proxies such as Portless can route. The Worker adds `X-Dev-Router-Route`, `X-Dev-Router-Subscriber`, `X-Dev-Router-Request-Id`, `X-Dev-Router-Token` (per-connection credential), and `X-Forwarded-*` when a client IP exists. It does not send `X-Dev-Router-Secret`.
 
 ### Timeouts and isolation
 
@@ -109,6 +112,38 @@ Correct: delivery uses `redirect: "manual"` and a 10s timeout. OAuth 302s are re
 
 Source: `src/forward.ts`
 
+### HIGH Forwarding internet scanner probes to subscribers
+
+Wrong: treating `/phpinfo.php` or `/credentials.json` as a public webhook path and looking up a Route Durable Object named after the first segment.
+
+Correct: `isScannerProbePath()` returns `404` `route_not_found` with no fan-out and no inbound log row. Named-route lookup uses the active-route index so unmatched paths do not instantiate Durable Objects. `publicPathHasDotDotSegment()` applies the same cheap `404` to remaining paths with a `..` segment after decode.
+
+Source: `src/scanner-probe.ts`, `src/ingress-urls.ts`, `src/public-ingress.ts`, `src/router-index.ts`
+
+### HIGH Proxying an OAuth callback that has no code or error
+
+Wrong: treating `GET /oauth/callback` as a reverse proxy (or as webhook fan-out) when the IdP result is missing.
+
+Correct: `classifyDelivery` requires `code` or `error` on callback paths. Incomplete callbacks return `404` `oauth_callback_incomplete` with no subscriber delivery. Only GET and POST are proxied (`405` `oauth_method_not_allowed` otherwise).
+
+Source: `src/oauth-state.ts`, `src/public-ingress.ts`
+
+### HIGH Forwarding client-spoofed X-Original-URL or X-Forwarded-For
+
+Wrong: copying inbound `X-Original-URL`, `X-Real-IP`, or a caller-supplied `X-Forwarded-For` prefix onto the subscriber.
+
+Correct: `shouldForwardHeader` drops those. `buildForwardHeaders` sets `X-Forwarded-For` to `CF-Connecting-IP` only.
+
+Source: `src/router-headers.ts`, `src/forward.ts`
+
+### HIGH Buffering an oversized public body before the tunnel cap
+
+Wrong: `request.arrayBuffer()` then discovering the 768 KiB tunnel limit in the Durable Object.
+
+Correct: `readCappedIngressBody()` returns `413` `request_too_large` from Content-Length or a streaming cap before delivery.
+
+Source: `src/ingress-body.ts`, `src/public-ingress.ts`
+
 ### HIGH Treating webhook fan-out as ready before this replica has OAuth tokens
 
 Wrong: connecting a new orb and expecting provider follow-up to succeed.
@@ -119,6 +154,6 @@ Source: `skills/forwarding/forwarding.md`, `skills/connect/connect.md`
 
 ## Completion
 
-A live subscriber receives the stripped path, including query string. Webhook callers see `202`. OAuth callers see the subscriber response. If nothing is registered, the public client has `404` `route_not_found`.
+A live subscriber receives the stripped path, including query string. Webhook callers see `202`. OAuth callers see the subscriber response. A callback path without `code` or `error` is `404` `oauth_callback_incomplete`. Non-GET/POST OAuth is `405` `oauth_method_not_allowed`. Oversized bodies are `413` `request_too_large`. If nothing is registered, the public client has `404` `route_not_found`. Credential dumps, PHP leftovers, `..` remaining paths, and similar scanner probes get the same `404` without forwarding, Durable Object lookup, or inbound-log rows.
 
 If this is a **new** environment, also say that replica mode is incomplete until the operator OAuth-registers with the third-party provider here. Point them at the router Public URL as the redirect URI.

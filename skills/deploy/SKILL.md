@@ -37,7 +37,7 @@ npx wrangler secret put DEV_ROUTER_SECRET
 npx wrangler secret put DEV_ROUTER_DASHBOARD_PASSWORD
 ```
 
-Bind a hostname such as `dev-webhooks.example.com` in the Cloudflare dashboard. Management join routes accept the operator secret or a minted route credential. Subscriber bind/heartbeat/DELETE accept the operator secret or that connection’s token. Tunnel upgrades may use the `dev-router.v1.` WebSocket subprotocol. Remote environments must reach this origin over HTTPS and WSS. The Worker fetches public-target `https://` origins; reverse-tunnel subscribers use the client’s outbound WebSocket. Mint route credentials with `npx dev-router token` (root) or `npx dev-router token --route <id>` (named) and give orbs that matching value, not the operator secret.
+Bind a **Custom Domain** such as `dev-webhooks.example.com` on a Cloudflare zone (not only `*.workers.dev`) so WAF custom rules and Bot Fight Mode can drop PHP/credential scanner probes before the Worker. The Worker still cheap-rejects those paths. Management join routes accept the operator secret or a minted route credential. Subscriber bind/heartbeat/DELETE accept the operator secret or that connection’s token. Tunnel upgrades may use the `dev-router.v1.` WebSocket subprotocol. Remote environments must reach this origin over HTTPS and WSS. The Worker fetches public-target `https://` origins; reverse-tunnel subscribers use the client’s outbound WebSocket. Mint route credentials with `npx dev-router token` (root) or `npx dev-router token --route <id>` (named) and give orbs that matching value, not the operator secret.
 
 ## Core Patterns
 

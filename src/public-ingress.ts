@@ -4,10 +4,17 @@ import {
   type InboundLogEventInput,
   type InboundLogKind
 } from "./inbound-log";
-import { remainingPathFromPublicUrl } from "./ingress-urls";
-import { classifyDelivery, parseFormBody, readOAuthState } from "./oauth-state";
+import { readCappedIngressBody } from "./ingress-body";
+import { publicPathHasDotDotSegment, remainingPathFromPublicUrl } from "./ingress-urls";
+import {
+  classifyDelivery,
+  parseFormBody,
+  readOAuthState,
+  type DeliveryClass
+} from "./oauth-state";
 import { durableObjectNameForRoute, isValidRouteId } from "./route-id";
 import { routerIndexStub } from "./router-index";
+import { isScannerProbePath } from "./scanner-probe";
 import {
   decodeBody,
   encodeBody,
@@ -22,6 +29,10 @@ export async function handlePublicIngress(
   ctx: ExecutionContext,
   url: URL
 ): Promise<Response> {
+  if (isScannerProbePath(url.pathname) || publicPathHasDotDotSegment(url.pathname)) {
+    return scannerProbeNotFound();
+  }
+
   const resolved = await resolvePublicRoute(env, url);
   if (!resolved) {
     const requestId = newPublicRequestId();
@@ -35,7 +46,8 @@ export async function handlePublicIngress(
         classifyDelivery({
           remainingPath: url.pathname || "/",
           search: url.search,
-          form: null
+          form: null,
+          method: request.method
         })
       ),
       result: "rejected",
@@ -47,7 +59,36 @@ export async function handlePublicIngress(
     return Response.json({ error: "route_not_found" }, { status: 404 });
   }
 
-  const body = await request.arrayBuffer();
+  if (publicPathHasDotDotSegment(resolved.remainingPath)) {
+    return scannerProbeNotFound();
+  }
+
+  const capped = await readCappedIngressBody(request);
+  if (!capped.ok) {
+    const requestId = newPublicRequestId();
+    await recordPublicInboundLog(env, {
+      id: requestId,
+      method: request.method,
+      routeId: resolved.routeId,
+      remainingPath: resolved.remainingPath,
+      search: url.search,
+      kind: inboundLogKind(
+        classifyDelivery({
+          remainingPath: resolved.remainingPath,
+          search: url.search,
+          form: null,
+          method: request.method
+        })
+      ),
+      result: "rejected",
+      status: 413,
+      error: "request_too_large",
+      subscriberCount: resolved.subscribers.length,
+      bodyBytes: capped.bodyBytes
+    });
+    return Response.json({ error: "request_too_large" }, { status: 413 });
+  }
+  const body = capped.body;
   const form = parseFormBody(request.headers.get("content-type"), body);
   const requestId = newPublicRequestId();
   const payload: IngressPayload = {
@@ -67,9 +108,47 @@ export async function handlePublicIngress(
   const delivery = classifyDelivery({
     remainingPath: resolved.remainingPath,
     search: url.search,
-    form
+    form,
+    method: request.method
   });
   const kind = inboundLogKind(delivery);
+
+  if (delivery === "oauth_callback_incomplete") {
+    await recordPublicInboundLog(env, {
+      id: requestId,
+      method: request.method,
+      routeId: resolved.routeId,
+      remainingPath: resolved.remainingPath,
+      search: url.search,
+      kind,
+      result: "rejected",
+      status: 404,
+      error: "oauth_callback_incomplete",
+      subscriberCount: resolved.subscribers.length,
+      bodyBytes: inboundBodyBytes(request, body)
+    });
+    return Response.json({ error: "oauth_callback_incomplete" }, { status: 404 });
+  }
+
+  if (delivery === "oauth_method_not_allowed") {
+    await recordPublicInboundLog(env, {
+      id: requestId,
+      method: request.method,
+      routeId: resolved.routeId,
+      remainingPath: resolved.remainingPath,
+      search: url.search,
+      kind,
+      result: "rejected",
+      status: 405,
+      error: "oauth_method_not_allowed",
+      subscriberCount: resolved.subscribers.length,
+      bodyBytes: inboundBodyBytes(request, body)
+    });
+    return Response.json(
+      { error: "oauth_method_not_allowed" },
+      { status: 405, headers: { Allow: "GET, POST" } }
+    );
+  }
 
   if (delivery === "oauth") {
     const result = await stub.proxyOAuth(payload);
@@ -109,8 +188,8 @@ function newPublicRequestId(): string {
   return `req_${crypto.randomUUID().replaceAll("-", "").slice(0, 12)}`;
 }
 
-function inboundLogKind(delivery: "oauth" | "fanout"): InboundLogKind {
-  return delivery === "oauth" ? "oauth" : "webhook";
+function inboundLogKind(delivery: DeliveryClass): InboundLogKind {
+  return delivery === "fanout" ? "webhook" : "oauth";
 }
 
 /** Persist metadata for one public ingress request; never the body, query, or headers. */
@@ -150,6 +229,11 @@ function proxyResultToResponse(result: {
   });
 }
 
+/** Same `404` `route_not_found` as an unmatched route, with no Durable Object or log write. */
+function scannerProbeNotFound(): Response {
+  return Response.json({ error: "route_not_found" }, { status: 404 });
+}
+
 async function resolvePublicRoute(
   env: Env,
   url: URL
@@ -160,7 +244,11 @@ async function resolvePublicRoute(
 } | null> {
   const segments = url.pathname.split("/").filter(Boolean);
   const candidate = segments[0];
-  if (candidate && isValidRouteId(candidate)) {
+  const indexed = await routerIndexStub(env).indexedPublicRoutePresence(
+    candidate && isValidRouteId(candidate) ? candidate : undefined
+  );
+
+  if (indexed.named && candidate) {
     const named = await env.ROUTE.getByName(
       durableObjectNameForRoute(candidate)
     ).getActiveSubscribers();
@@ -173,15 +261,17 @@ async function resolvePublicRoute(
     }
   }
 
-  const defaults = await env.ROUTE.getByName(
-    durableObjectNameForRoute("")
-  ).getActiveSubscribers();
-  if (defaults.length > 0) {
-    return {
-      routeId: "",
-      remainingPath: remainingPathFromPublicUrl(url.pathname, ""),
-      subscribers: defaults
-    };
+  if (indexed.root) {
+    const defaults = await env.ROUTE.getByName(
+      durableObjectNameForRoute("")
+    ).getActiveSubscribers();
+    if (defaults.length > 0) {
+      return {
+        routeId: "",
+        remainingPath: remainingPathFromPublicUrl(url.pathname, ""),
+        subscribers: defaults
+      };
+    }
   }
 
   return null;

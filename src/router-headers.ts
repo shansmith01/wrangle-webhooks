@@ -29,7 +29,30 @@ const HOP_BY_HOP_HEADERS = new Set([
   "set-cookie"
 ]);
 
+/** Client-supplied forwarding headers an attacker can spoof (`X-Original-URL`, `X-Real-IP`). */
+const SPOOFED_FORWARD_HEADERS = new Set([
+  "cf-connecting-ip",
+  "forwarded",
+  "true-client-ip",
+  "x-client-ip",
+  "x-dev-router-connection",
+  "x-dev-router-request-id",
+  "x-dev-router-route",
+  "x-dev-router-secret",
+  "x-dev-router-subscriber",
+  "x-dev-router-token",
+  "x-forwarded-for",
+  "x-forwarded-host",
+  "x-forwarded-proto",
+  "x-forwarded-server",
+  "x-originating-ip",
+  "x-original-url",
+  "x-real-ip",
+  "x-rewrite-url"
+]);
+
 /** Whether this header should be copied onto the forwarded subscriber request. */
 export function shouldForwardHeader(name: string): boolean {
-  return !HOP_BY_HOP_HEADERS.has(name.toLowerCase());
+  const lower = name.toLowerCase();
+  return !HOP_BY_HOP_HEADERS.has(lower) && !SPOOFED_FORWARD_HEADERS.has(lower);
 }

@@ -3,6 +3,7 @@ import { RouteDurableObject } from "../../src/durable-object";
 import { OAUTH_STATE_TTL_MS, wrapOAuthState } from "../../src/oauth-state";
 import { durableObjectNameForIndex, durableObjectNameForRoute } from "../../src/route-id";
 import { ROUTER_HEADER_CONNECTION } from "../../src/router-headers";
+import { TUNNEL_MAX_BODY_BYTES } from "../../src/tunnel-protocol";
 import {
   createExecutionContext,
   env,
@@ -455,6 +456,23 @@ describe("dashboard", () => {
 });
 
 describe("public routing", () => {
+  it("records unmatched GET / without treating it as a scanner probe", async () => {
+    const response = await fetchWorker("https://dev-webhooks.example.com/");
+    expect(response.status).toBe(404);
+    expect(await response.json()).toEqual({ error: "route_not_found" });
+
+    const status = await fetchWorker("https://dev-webhooks.example.com/dashboard/status", {
+      headers: await dashboardHeaders()
+    });
+    const body = (await status.json()) as {
+      inboundLog: Array<{ path: string; error: string | null }>;
+    };
+    expect(body.inboundLog[0]).toMatchObject({
+      path: "/",
+      error: "route_not_found"
+    });
+  });
+
   it("returns 404 when a route has no active subscribers", async () => {
     const response = await fetchWorker(
       "https://dev-webhooks.example.com/missing/api/hooks"
@@ -499,6 +517,66 @@ describe("public routing", () => {
     expect(JSON.stringify(body)).not.toContain("SHOULD-NOT-LOG");
   });
 
+  it("drops scanner probes without forwarding or recording inbound metadata", async () => {
+    await register("", "https://dev-root.example");
+    const response = await fetchWorker(
+      "https://dev-webhooks.example.com/phpinfo.php"
+    );
+    expect(response.status).toBe(404);
+    expect(await response.json()).toEqual({ error: "route_not_found" });
+
+    const credential = await fetchWorker(
+      "https://dev-webhooks.example.com/credentials.json"
+    );
+    expect(credential.status).toBe(404);
+
+    const status = await fetchWorker("https://dev-webhooks.example.com/dashboard/status", {
+      headers: await dashboardHeaders()
+    });
+    const body = (await status.json()) as {
+      inboundLog: Array<{ path: string }>;
+    };
+    expect(body.inboundLog.map((event) => event.path)).not.toContain("/phpinfo.php");
+    expect(body.inboundLog.map((event) => event.path)).not.toContain("/credentials.json");
+    expect(await env.ROUTER_INDEX.getByName(durableObjectNameForIndex()).listRoutes()).toEqual([
+      ""
+    ]);
+  });
+
+  it("drops remaining paths with a decoded dot-dot segment without forwarding", async () => {
+    await register("", "https://dev-root.example");
+    const response = await fetchWorker(
+      "https://dev-webhooks.example.com/oauth/callback/%252e%252e/admin?code=1"
+    );
+    expect(response.status).toBe(404);
+    expect(await response.json()).toEqual({ error: "route_not_found" });
+
+    const status = await fetchWorker("https://dev-webhooks.example.com/dashboard/status", {
+      headers: await dashboardHeaders()
+    });
+    const body = (await status.json()) as {
+      inboundLog: Array<{ path: string }>;
+    };
+    expect(body.inboundLog.map((event) => event.path)).not.toContain(
+      "/oauth/callback/%252e%252e/admin"
+    );
+  });
+
+  it("still fans out real root webhooks after scanner probes are dropped", async () => {
+    await register("", "https://dev-root.example");
+    fetchMock
+      .get("https://dev-root.example")
+      .intercept({ path: "/api/hooks/payment", method: "POST" })
+      .reply(200, "ok");
+
+    const response = await fetchWorker(
+      "https://dev-webhooks.example.com/api/hooks/payment",
+      { method: "POST", body: "{\"ok\":true}" }
+    );
+    expect(response.status).toBe(202);
+    expect(await response.json()).toEqual({ accepted: true });
+  });
+
   it("accepts a public request and fans out to every subscriber independently", async () => {
     await register("fanout-route", "https://dev-a.example/dev-ingress");
     await register("fanout-route", "https://dev-b.example/dev-ingress");
@@ -533,6 +611,9 @@ describe("public routing", () => {
           "X-Signature": "goki-hmac",
           Authorization: "Bearer should-not-forward",
           Cookie: "dashboard=should-not-forward",
+          "X-Original-URL": "/admin",
+          "X-Real-IP": "1.2.3.4",
+          "X-Forwarded-For": "1.2.3.4, 5.6.7.8",
           "CF-Connecting-IP": "203.0.113.10"
         },
         body: '{"ok":true}'
@@ -554,6 +635,12 @@ describe("public routing", () => {
     const cookie = headerBag.cookie ?? headerBag.Cookie;
     expect(authorization).toBeUndefined();
     expect(cookie).toBeUndefined();
+    const originalUrl = headerBag["x-original-url"] ?? headerBag["X-Original-URL"];
+    const realIp = headerBag["x-real-ip"] ?? headerBag["X-Real-IP"];
+    expect(originalUrl).toBeUndefined();
+    expect(realIp).toBeUndefined();
+    const forwardedFor = headerBag["x-forwarded-for"] ?? headerBag["X-Forwarded-For"];
+    expect(forwardedFor).toBe("203.0.113.10");
     const signature = headerBag["x-signature"] ?? headerBag["X-Signature"];
     expect(signature).toBe("goki-hmac");
     const stripe =
@@ -643,6 +730,76 @@ describe("public routing", () => {
     );
     expect(response.status).toBe(200);
     expect(await response.text()).toBe("ok");
+  });
+
+  it("does not proxy or fan out an OAuth callback path without code or error", async () => {
+    await register("oauth-empty", "https://dev-oauth-empty.example");
+    const response = await fetchWorker(
+      "https://dev-webhooks.example.com/oauth-empty/oauth/callback"
+    );
+    expect(response.status).toBe(404);
+    expect(await response.json()).toEqual({ error: "oauth_callback_incomplete" });
+
+    const status = await fetchWorker("https://dev-webhooks.example.com/dashboard/status", {
+      headers: await dashboardHeaders()
+    });
+    const body = (await status.json()) as {
+      inboundLog: Array<{
+        kind: string;
+        result: string;
+        status: number;
+        error: string | null;
+        path: string;
+      }>;
+    };
+    expect(body.inboundLog[0]).toMatchObject({
+      kind: "oauth",
+      result: "rejected",
+      status: 404,
+      error: "oauth_callback_incomplete",
+      path: "/oauth/callback"
+    });
+  });
+
+  it("proxies an OAuth callback that has error instead of code", async () => {
+    await register("", "https://dev-oauth-error.example");
+    fetchMock
+      .get("https://dev-oauth-error.example")
+      .intercept({ path: /\/oauth\/callback/, method: "GET" })
+      .reply(302, "denied", {
+        headers: { Location: "https://app.example/denied" }
+      });
+
+    const response = await fetchWorker(
+      "https://dev-webhooks.example.com/oauth/callback?error=access_denied&state=x"
+    );
+    expect(response.status).toBe(302);
+    expect(response.headers.get("Location")).toBe("https://app.example/denied");
+  });
+
+  it("rejects OAuth callbacks that are not GET or POST", async () => {
+    await register("oauth-put", "https://dev-oauth-put.example");
+    const response = await fetchWorker(
+      "https://dev-webhooks.example.com/oauth-put/oauth/callback?code=one-time",
+      { method: "PUT" }
+    );
+    expect(response.status).toBe(405);
+    expect(response.headers.get("Allow")).toBe("GET, POST");
+    expect(await response.json()).toEqual({ error: "oauth_method_not_allowed" });
+  });
+
+  it("rejects public ingress bodies above the 768 KiB tunnel cap before forwarding", async () => {
+    await register("too-large", "https://dev-too-large.example");
+    const response = await fetchWorker(
+      "https://dev-webhooks.example.com/too-large/api/hooks/payment",
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: "x".repeat(TUNNEL_MAX_BODY_BYTES + 1)
+      }
+    );
+    expect(response.status).toBe(413);
+    expect(await response.json()).toEqual({ error: "request_too_large" });
   });
 
   it("returns the subscriber redirect for a correlated OAuth callback", async () => {
@@ -756,6 +913,96 @@ describe("public routing", () => {
 
     const response = await fetchWorker(
       "https://dev-webhooks.example.com/probe-route/admin?state=1&code=1"
+    );
+    expect(response.status).toBe(202);
+    expect(await response.json()).toEqual({ accepted: true });
+  });
+
+  it("proxies nested /oolio/callback paths as OAuth and returns the bound subscriber redirect", async () => {
+    const first = await register("", "https://dev-oolio-a.example");
+    await register("", "https://dev-oolio-b.example");
+
+    fetchMock
+      .get("https://dev-oolio-a.example")
+      .intercept({ path: /\/api\/integrations\/oolio\/callback/, method: "GET" })
+      .reply(302, "connected", {
+        headers: { Location: "https://app.example/settings/integrations" }
+      });
+
+    const bind = await fetchWorker(
+      `https://dev-webhooks.example.com/_router/subscribers/${first.subscriberId}/oauth-states`,
+      {
+        method: "POST",
+        headers: authHeaders({ "Content-Type": "application/json" }),
+        body: JSON.stringify({ state: "oolio-orb-state" })
+      }
+    );
+    expect(bind.status).toBe(200);
+
+    const response = await fetchWorker(
+      "https://dev-webhooks.example.com/api/integrations/oolio/callback?code=one-time&state=oolio-orb-state"
+    );
+    expect(response.status).toBe(302);
+    expect(response.headers.get("Location")).toBe(
+      "https://app.example/settings/integrations"
+    );
+    expect(await response.text()).toBe("connected");
+  });
+
+  it("rejects missing, unknown, and expired /oolio/callback state instead of fanning out", async () => {
+    const first = await register("", "https://dev-oolio-miss.example");
+    await register("", "https://dev-oolio-other.example");
+
+    const missing = await fetchWorker(
+      "https://dev-webhooks.example.com/api/integrations/oolio/callback?code=one-time"
+    );
+    expect(missing.status).toBe(409);
+    expect(await missing.json()).toMatchObject({ error: "oauth_unroutable" });
+
+    const unknown = await fetchWorker(
+      "https://dev-webhooks.example.com/api/integrations/oolio/callback?code=one-time&state=unknown"
+    );
+    expect(unknown.status).toBe(409);
+    expect(await unknown.json()).toMatchObject({ error: "oauth_unroutable" });
+
+    const bind = await fetchWorker(
+      `https://dev-webhooks.example.com/_router/subscribers/${first.subscriberId}/oauth-states`,
+      {
+        method: "POST",
+        headers: authHeaders({ "Content-Type": "application/json" }),
+        body: JSON.stringify({ state: "expired-oolio-state" })
+      }
+    );
+    expect(bind.status).toBe(200);
+
+    const stub = env.ROUTE.getByName(durableObjectNameForRoute(""));
+    await runInDurableObject(stub, async (_instance: RouteDurableObject, state) => {
+      state.storage.sql.exec("UPDATE oauth_bindings SET expires_at = 0");
+    });
+
+    const expired = await fetchWorker(
+      "https://dev-webhooks.example.com/api/integrations/oolio/callback?code=one-time&state=expired-oolio-state"
+    );
+    expect(expired.status).toBe(409);
+    expect(await expired.json()).toMatchObject({ error: "oauth_unroutable" });
+  });
+
+  it("still fans out neighboring Oolio webhook paths", async () => {
+    await register("", "https://dev-oolio-hook-a.example");
+    await register("", "https://dev-oolio-hook-b.example");
+
+    fetchMock
+      .get("https://dev-oolio-hook-a.example")
+      .intercept({ path: /\/api\/integrations\/oolio\/webhooks/, method: "POST" })
+      .reply(200, "a");
+    fetchMock
+      .get("https://dev-oolio-hook-b.example")
+      .intercept({ path: /\/api\/integrations\/oolio\/webhooks/, method: "POST" })
+      .reply(200, "b");
+
+    const response = await fetchWorker(
+      "https://dev-webhooks.example.com/api/integrations/oolio/webhooks?state=1&code=1",
+      { method: "POST", body: "{}" }
     );
     expect(response.status).toBe(202);
     expect(await response.json()).toEqual({ accepted: true });

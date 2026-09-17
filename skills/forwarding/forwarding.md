@@ -33,10 +33,10 @@ OAuth callbacks use **correlated single-target routing** and **return the subscr
 
 A request is treated as OAuth when:
 
-- the remaining path is `/oauth/callback`, `/auth/callback`, or a nested provider callback such as `/api/auth/callback/google`, or
+- the remaining path is `/oauth/callback`, `/auth/callback`, `/oolio/callback`, or a nested provider callback such as `/api/auth/callback/google` or `/api/integrations/oolio/callback`, **and** the query or form body has `code` or `error`, or
 - the query or form body has a **signed** `wrapOAuthState()` value (`dr1.` prefix) plus `code` or `error`
 
-Arbitrary paths that merely include `state` and `code` are webhook fan-out, not a reverse proxy. Bound app-generated `state` still works on callback paths.
+A callback path with neither `code` nor `error` is `404` `{ "error": "oauth_callback_incomplete" }`: not a reverse proxy and not webhook fan-out. OAuth proxy is GET or POST only (`405` `{ "error": "oauth_method_not_allowed" }` otherwise). Arbitrary paths that merely include `state` and `code` are webhook fan-out, not a reverse proxy. Bound app-generated `state` still works on complete callback paths. Remaining paths with a `..` path-traversal segment after decode are `404` `{ "error": "route_not_found" }` with no forwarding, Durable Object delivery, or inbound-log row.
 
 Routing order:
 
@@ -47,7 +47,9 @@ Routing order:
 
 If no subscribers are active, the router returns `404` `{ "error": "route_not_found" }`.
 
-Each delivery has a 10 second timeout and does not follow redirects. Tunnel payloads are capped at 768 KiB.
+Internet-wide scanner probes (PHP leftovers such as `/phpinfo.php`, credential dumps such as `/credentials.json`, `/.env`, `/wp-admin`, `/_profiler`) get that same `404` immediately. They are not forwarded to subscribers, do not instantiate a Route Durable Object from the first path segment, and are not written to the inbound request log. Remaining paths with a `..` path-traversal segment after decode get that same cheap `404`. Real unmatched paths such as `/missing/api/hooks` are still logged. `GET /` and provider webhooks are not treated as probes.
+
+Each delivery has a 10 second timeout and does not follow redirects. Public bodies and tunnel payloads are capped at 768 KiB (`413` `request_too_large` before the Worker buffers an oversized body).
 
 Forwarded requests include:
 
@@ -59,7 +61,7 @@ Forwarded requests include:
 
 The Worker does **not** send `X-Dev-Router-Secret`. Do not compare a hop header to the management bearer token.
 
-Hop-by-hop headers (`connection`, `keep-alive`, `host`, `content-length`, and similar) are not forwarded. `Authorization` and `Cookie` are stripped on the inbound hop. OAuth responses keep status, `Location`, and body; `Set-Cookie` is not copied onto the Worker host. Reverse-tunnel delivery also drops `Host` so the sidecar `fetch()` sets it from `localUrl` (for example `http://nomads-app-api.localhost:1355`); `X-Forwarded-Host` still carries the public host.
+Hop-by-hop headers (`connection`, `keep-alive`, `host`, `content-length`, and similar) are not forwarded. `Authorization` and `Cookie` are stripped on the inbound hop. Client-spoofed forwarding headers (`X-Original-URL`, `X-Rewrite-URL`, `X-Real-IP`, inbound `X-Forwarded-*`) are dropped; `X-Forwarded-For` is set from `CF-Connecting-IP` only. OAuth responses keep status, `Location`, and body; `Set-Cookie` is not copied onto the Worker host. Reverse-tunnel delivery also drops `Host` so the sidecar `fetch()` sets it from `localUrl` (for example `http://nomads-app-api.localhost:1355`); `X-Forwarded-Host` still carries the public host.
 
 `_router` and `dashboard` are reserved path prefixes and are not valid `routeId` values.
 

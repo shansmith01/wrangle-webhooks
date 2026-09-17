@@ -41,6 +41,41 @@ export function joinTargetUrl(
   return base.toString();
 }
 
+/** True when a public remaining path contains a `..` path-traversal segment after decode. */
+export function publicPathHasDotDotSegment(pathname: string): boolean {
+  let current = pathname;
+  for (let i = 0; i < 4; i++) {
+    if (pathSegmentsIncludeDotDot(current)) {
+      return true;
+    }
+    const decoded = decodePublicPathnameOnce(current);
+    if (decoded === current) {
+      break;
+    }
+    current = decoded;
+  }
+  return pathSegmentsIncludeDotDot(current);
+}
+
+function decodePublicPathnameOnce(pathname: string): string {
+  try {
+    return decodeURIComponent(pathname);
+  } catch {
+    return pathname;
+  }
+}
+
+function pathSegmentsIncludeDotDot(pathname: string): boolean {
+  const normalized = pathname.replace(/\\/g, "/");
+  for (const segment of normalized.split("/")) {
+    const withoutParams = segment.replace(/;.*$/, "");
+    if (withoutParams === "..") {
+      return true;
+    }
+  }
+  return false;
+}
+
 /** Strip the public route id prefix from an inbound pathname. */
 export function remainingPathFromPublicUrl(pathname: string, routeId: string): string {
   if (routeId === "") {

@@ -24,32 +24,71 @@ export class OAuthStateError extends Error {
   }
 }
 
-/** True when the remaining path looks like an OAuth or auth callback. */
-export function isOAuthCallbackPath(remainingPath: string): boolean {
-  const path = remainingPath.replace(/\/+$/, "") || "/";
-  return /\/(oauth|auth)\/callback(?:\/|$)/i.test(path);
+/** Public delivery class: OAuth proxy, webhook fan-out, or a rejected callback. */
+export type DeliveryClass =
+  | "oauth"
+  | "fanout"
+  | "oauth_callback_incomplete"
+  | "oauth_method_not_allowed";
+
+/** True when the HTTP method is a GET or POST OAuth callback (not PUT/PATCH/DELETE). */
+export function isOAuthCallbackMethod(method: string): boolean {
+  const upper = method.trim().toUpperCase();
+  return upper === "GET" || upper === "POST";
 }
 
-/** Choose OAuth proxy vs webhook fan-out from path, query, and form fields. */
+/** True when the remaining path looks like an OAuth, auth, or oolio callback. */
+export function isOAuthCallbackPath(remainingPath: string): boolean {
+  const path = remainingPath.replace(/\/+$/, "") || "/";
+  return /\/(oauth|auth|oolio)\/callback(?:\/|$)/i.test(path);
+}
+
+/** True when query or form includes an OAuth `code` or `error` result. */
+export function hasOAuthCodeOrError(
+  search: string,
+  form: URLSearchParams | null
+): boolean {
+  const { code, error } = oauthCallbackResultParams(search, form);
+  return Boolean(code || error);
+}
+
+/** Choose OAuth proxy vs webhook fan-out from path, query, form fields, and method. */
 export function classifyDelivery(options: {
   remainingPath: string;
   search: string;
   form: URLSearchParams | null;
-}): "oauth" | "fanout" {
+  method?: string;
+}): DeliveryClass {
+  const { state, code, error } = oauthCallbackResultParams(options.search, options.form);
+  const hasResult = Boolean(code || error);
   if (isOAuthCallbackPath(options.remainingPath)) {
+    if (!hasResult) {
+      return "oauth_callback_incomplete";
+    }
+    if (options.method && !isOAuthCallbackMethod(options.method)) {
+      return "oauth_method_not_allowed";
+    }
     return "oauth";
   }
-
-  const query = new URLSearchParams(
-    options.search.startsWith("?") ? options.search.slice(1) : options.search
-  );
-  const state = query.get("state") ?? options.form?.get("state");
-  const code = query.get("code") ?? options.form?.get("code");
-  const error = query.get("error") ?? options.form?.get("error");
-  if (state?.startsWith(OAUTH_STATE_PREFIX) && (code || error)) {
+  if (state?.startsWith(OAUTH_STATE_PREFIX) && hasResult) {
+    if (options.method && !isOAuthCallbackMethod(options.method)) {
+      return "oauth_method_not_allowed";
+    }
     return "oauth";
   }
   return "fanout";
+}
+
+function oauthCallbackResultParams(
+  search: string,
+  form: URLSearchParams | null
+): { state: string | null; code: string | null; error: string | null } {
+  const query = new URLSearchParams(search.startsWith("?") ? search.slice(1) : search);
+  return {
+    state: query.get("state") ?? form?.get("state"),
+    code: query.get("code") ?? form?.get("code"),
+    error: query.get("error") ?? form?.get("error")
+  };
 }
 
 /** Read the OAuth `state` query or form field from an inbound request. */
@@ -57,8 +96,7 @@ export function readOAuthState(
   search: string,
   form: URLSearchParams | null
 ): string | null {
-  const query = new URLSearchParams(search.startsWith("?") ? search.slice(1) : search);
-  const state = query.get("state") ?? form?.get("state");
+  const state = oauthCallbackResultParams(search, form).state;
   return state && state.length > 0 ? state : null;
 }
 

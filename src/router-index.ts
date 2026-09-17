@@ -17,7 +17,7 @@ import {
   listInboundLogEvents,
   migrateInboundLog
 } from "./inbound-log-storage";
-import { durableObjectNameForIndex, isAllowedRouteId } from "./route-id";
+import { durableObjectNameForIndex, isAllowedRouteId, isValidRouteId } from "./route-id";
 
 interface RouteRow {
   route_id: string;
@@ -71,6 +71,31 @@ export class RouterIndex extends DurableObject<Env> {
       .exec<RouteRow>("SELECT route_id, updated_at FROM routes ORDER BY route_id ASC")
       .toArray();
     return rows.map((row) => row.route_id);
+  }
+
+  /**
+   * Whether the first path segment is an indexed named route, and whether a
+   * root catch-all is indexed. Public ingress uses this so unmatched scanner
+   * probes do not instantiate Route Durable Objects.
+   */
+  async indexedPublicRoutePresence(namedRouteId: string | undefined): Promise<{
+    named: boolean;
+    root: boolean;
+  }> {
+    if (namedRouteId && isValidRouteId(namedRouteId)) {
+      const rows = this.ctx.storage.sql
+        .exec<RouteRow>(
+          "SELECT route_id, updated_at FROM routes WHERE route_id = ? OR route_id = ''",
+          namedRouteId
+        )
+        .toArray();
+      const ids = new Set(rows.map((row) => row.route_id));
+      return { named: ids.has(namedRouteId), root: ids.has("") };
+    }
+    const root = this.ctx.storage.sql
+      .exec<RouteRow>("SELECT route_id, updated_at FROM routes WHERE route_id = ''")
+      .toArray();
+    return { named: false, root: root.length > 0 };
   }
 
   /** Append client connection audit events for operator review. */
