@@ -21,9 +21,13 @@ beforeAll(() => {
 
 beforeEach(async () => {
   fetchMock.assertNoPendingInterceptors();
-  expect(
-    await env.ROUTER_INDEX.getByName(durableObjectNameForIndex()).listRoutes()
-  ).toEqual([]);
+  const index = env.ROUTER_INDEX.getByName(durableObjectNameForIndex());
+  expect(await index.listRoutes()).toEqual([]);
+  const paths = await index.listAllOAuthCallbackPaths();
+  for (const row of paths) {
+    await index.removeOAuthCallbackPath(row.routeId, row.remainingPath);
+  }
+  expect(await index.listAllOAuthCallbackPaths()).toEqual([]);
 });
 
 afterEach(() => {
@@ -89,6 +93,27 @@ async function register(
   });
   expect(response.status).toBe(200);
   return (await response.json()) as { subscriberId: string; connectionToken: string };
+}
+
+/** Register an exact remaining path for OAuth reverse proxy (operator secret only). */
+async function registerOAuthCallbackPath(
+  routeId: string,
+  remainingPath: string
+): Promise<void> {
+  const path =
+    routeId === ""
+      ? "https://dev-webhooks.example.com/_router/oauth-callback-paths"
+      : `https://dev-webhooks.example.com/_router/routes/${routeId}/oauth-callback-paths`;
+  const response = await fetchWorker(path, {
+    method: "PUT",
+    headers: authHeaders({ "Content-Type": "application/json" }),
+    body: JSON.stringify({ path: remainingPath })
+  });
+  expect(response.status).toBe(200);
+  expect(await response.json()).toMatchObject({
+    routeId,
+    path: remainingPath
+  });
 }
 
 describe("management API", () => {
@@ -248,6 +273,9 @@ describe("dashboard", () => {
     expect(html).toContain("/dashboard/status");
     expect(html).toContain('id="routes"');
     expect(html).toContain("Live connections");
+    expect(html).toContain("OAuth callback paths");
+    expect(html).toContain('id="oauth-callbacks"');
+    expect(html).toContain("No OAuth callback paths registered");
     expect(html).toContain("Inbound requests");
     expect(html).toContain('id="inbound"');
     expect(html).toContain("Connection history");
@@ -262,9 +290,49 @@ describe("dashboard", () => {
       routeCount: 0,
       subscriberCount: 0,
       routes: [],
+      oauthCallbackPaths: [],
       inboundLog: [],
       connectionLog: []
     });
+  });
+
+  it("registers OAuth callback paths from the dashboard form", async () => {
+    const headers = await dashboardHeaders({
+      "Content-Type": "application/x-www-form-urlencoded"
+    });
+    const created = await fetchWorker(
+      "https://dev-webhooks.example.com/dashboard/oauth-callback-paths",
+      {
+        method: "POST",
+        headers,
+        body: "routeId=dash-oauth&path=%2Fapi%2Fauth%2Fcallback%2Fgoogle",
+        redirect: "manual"
+      }
+    );
+    expect(created.status).toBe(303);
+
+    const status = await fetchWorker("https://dev-webhooks.example.com/dashboard/status", {
+      headers: await dashboardHeaders()
+    });
+    const body = (await status.json()) as {
+      oauthCallbackPaths: Array<{ routeId: string; remainingPath: string }>;
+    };
+    expect(body.oauthCallbackPaths).toEqual([
+      { routeId: "dash-oauth", remainingPath: "/api/auth/callback/google", createdAt: expect.any(Number) }
+    ]);
+
+    const removed = await fetchWorker(
+      "https://dev-webhooks.example.com/dashboard/oauth-callback-paths/delete",
+      {
+        method: "POST",
+        headers: await dashboardHeaders({
+          "Content-Type": "application/x-www-form-urlencoded"
+        }),
+        body: "routeId=dash-oauth&path=%2Fapi%2Fauth%2Fcallback%2Fgoogle",
+        redirect: "manual"
+      }
+    );
+    expect(removed.status).toBe(303);
   });
 
   it("does not embed subscriber JSON in a script tag", async () => {
@@ -719,6 +787,7 @@ describe("public routing", () => {
 
   it("forwards the full path when the route id is empty", async () => {
     await register("", "https://dev-root.example");
+    await registerOAuthCallbackPath("", "/oauth/callback");
 
     fetchMock
       .get("https://dev-root.example")
@@ -732,8 +801,38 @@ describe("public routing", () => {
     expect(await response.text()).toBe("ok");
   });
 
-  it("does not proxy or fan out an OAuth callback path without code or error", async () => {
+  it("rejects unregistered heuristic OAuth callback paths with no fan-out", async () => {
+    await register("oauth-miss", "https://dev-oauth-miss.example");
+    const response = await fetchWorker(
+      "https://dev-webhooks.example.com/oauth-miss/oauth/callback?code=one-time"
+    );
+    expect(response.status).toBe(404);
+    expect(await response.json()).toEqual({ error: "oauth_callback_not_registered" });
+
+    const status = await fetchWorker("https://dev-webhooks.example.com/dashboard/status", {
+      headers: await dashboardHeaders()
+    });
+    const body = (await status.json()) as {
+      inboundLog: Array<{
+        kind: string;
+        result: string;
+        status: number;
+        error: string | null;
+        path: string;
+      }>;
+    };
+    expect(body.inboundLog[0]).toMatchObject({
+      kind: "oauth",
+      result: "rejected",
+      status: 404,
+      error: "oauth_callback_not_registered",
+      path: "/oauth/callback"
+    });
+  });
+
+  it("does not proxy or fan out an allowlisted OAuth callback path without code or error", async () => {
     await register("oauth-empty", "https://dev-oauth-empty.example");
+    await registerOAuthCallbackPath("oauth-empty", "/oauth/callback");
     const response = await fetchWorker(
       "https://dev-webhooks.example.com/oauth-empty/oauth/callback"
     );
@@ -763,6 +862,7 @@ describe("public routing", () => {
 
   it("proxies an OAuth callback that has error instead of code", async () => {
     await register("", "https://dev-oauth-error.example");
+    await registerOAuthCallbackPath("", "/oauth/callback");
     fetchMock
       .get("https://dev-oauth-error.example")
       .intercept({ path: /\/oauth\/callback/, method: "GET" })
@@ -779,6 +879,7 @@ describe("public routing", () => {
 
   it("rejects OAuth callbacks that are not GET or POST", async () => {
     await register("oauth-put", "https://dev-oauth-put.example");
+    await registerOAuthCallbackPath("oauth-put", "/oauth/callback");
     const response = await fetchWorker(
       "https://dev-webhooks.example.com/oauth-put/oauth/callback?code=one-time",
       { method: "PUT" }
@@ -805,6 +906,8 @@ describe("public routing", () => {
   it("returns the subscriber redirect for a correlated OAuth callback", async () => {
     const first = await register("oauth-route", "https://dev-oauth-a.example");
     await register("oauth-route", "https://dev-oauth-b.example");
+    await registerOAuthCallbackPath("oauth-route", "/oauth/callback");
+    await registerOAuthCallbackPath("oauth-route", "/api/auth/callback/google");
 
     fetchMock
       .get("https://dev-oauth-a.example")
@@ -873,6 +976,7 @@ describe("public routing", () => {
   it("does not fan an uncorrelated OAuth callback to every subscriber", async () => {
     await register("oauth-ambiguous", "https://dev-oauth-a.example");
     await register("oauth-ambiguous", "https://dev-oauth-b.example");
+    await registerOAuthCallbackPath("oauth-ambiguous", "/oauth/callback");
 
     const response = await fetchWorker(
       "https://dev-webhooks.example.com/oauth-ambiguous/oauth/callback?code=one-time&state=unknown"
@@ -918,9 +1022,10 @@ describe("public routing", () => {
     expect(await response.json()).toEqual({ accepted: true });
   });
 
-  it("proxies nested /oolio/callback paths as OAuth and returns the bound subscriber redirect", async () => {
+  it("proxies nested /oolio/callback paths only when allowlisted", async () => {
     const first = await register("", "https://dev-oolio-a.example");
     await register("", "https://dev-oolio-b.example");
+    await registerOAuthCallbackPath("", "/api/integrations/oolio/callback");
 
     fetchMock
       .get("https://dev-oolio-a.example")
@@ -952,6 +1057,7 @@ describe("public routing", () => {
   it("rejects missing, unknown, and expired /oolio/callback state instead of fanning out", async () => {
     const first = await register("", "https://dev-oolio-miss.example");
     await register("", "https://dev-oolio-other.example");
+    await registerOAuthCallbackPath("", "/api/integrations/oolio/callback");
 
     const missing = await fetchWorker(
       "https://dev-webhooks.example.com/api/integrations/oolio/callback?code=one-time"
@@ -1011,6 +1117,8 @@ describe("public routing", () => {
   it("routes a form-encoded OAuth callback and rejects an expired signed state", async () => {
     const first = await register("form-oauth", "https://dev-form-a.example");
     await register("form-oauth", "https://dev-form-b.example");
+    await registerOAuthCallbackPath("form-oauth", "/oauth/callback");
+    await registerOAuthCallbackPath("form-oauth", "/custom/redirect");
 
     fetchMock
       .get("https://dev-form-a.example")
@@ -1060,6 +1168,12 @@ describe("public routing", () => {
     expect(custom.status).toBe(302);
     expect(custom.headers.get("Location")).toBe("https://app.example/signed");
 
+    const unsignedCustom = await fetchWorker(
+      `https://dev-webhooks.example.com/form-oauth/other/redirect?code=abc&state=${encodeURIComponent(signed)}`
+    );
+    expect(unsignedCustom.status).toBe(404);
+    expect(await unsignedCustom.json()).toEqual({ error: "oauth_callback_not_registered" });
+
     const expired = await wrapOAuthState({
       secret: env.DEV_ROUTER_SECRET,
       subscriberId: first.subscriberId,
@@ -1080,6 +1194,54 @@ describe("public routing", () => {
     expect(rejected.status).toBe(409);
     expect(await rejected.json()).toMatchObject({ error: "oauth_unroutable" });
   });
+
+  it("registers and deletes OAuth callback paths with the operator secret only", async () => {
+    const created = await fetchWorker(
+      "https://dev-webhooks.example.com/_router/routes/allow-me/oauth-callback-paths",
+      {
+        method: "PUT",
+        headers: authHeaders({ "Content-Type": "application/json" }),
+        body: JSON.stringify({ path: "/api/auth/callback/google" })
+      }
+    );
+    expect(created.status).toBe(200);
+
+    const listed = await fetchWorker(
+      "https://dev-webhooks.example.com/_router/routes/allow-me/oauth-callback-paths",
+      { headers: authHeaders() }
+    );
+    expect(listed.status).toBe(200);
+    expect(await listed.json()).toEqual({
+      routeId: "allow-me",
+      paths: ["/api/auth/callback/google"]
+    });
+
+    const routeSecret = await deriveRouteSecret(env.DEV_ROUTER_SECRET, "allow-me");
+    const denied = await fetchWorker(
+      "https://dev-webhooks.example.com/_router/routes/allow-me/oauth-callback-paths",
+      {
+        method: "PUT",
+        headers: {
+          Authorization: `Bearer ${routeSecret}`,
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify({ path: "/oauth/callback" })
+      }
+    );
+    expect(denied.status).toBe(401);
+
+    const removed = await fetchWorker(
+      "https://dev-webhooks.example.com/_router/routes/allow-me/oauth-callback-paths?path=%2Fapi%2Fauth%2Fcallback%2Fgoogle",
+      { method: "DELETE", headers: authHeaders() }
+    );
+    expect(removed.status).toBe(204);
+
+    const empty = await fetchWorker(
+      "https://dev-webhooks.example.com/_router/routes/allow-me/oauth-callback-paths",
+      { headers: authHeaders() }
+    );
+    expect(await empty.json()).toEqual({ routeId: "allow-me", paths: [] });
+  });
 });
 
 describe("reverse tunnel", () => {
@@ -1096,6 +1258,7 @@ describe("reverse tunnel", () => {
     expect(hello.subscriberId).toMatch(/^sub_/);
     expect(hello.forwardToken).toMatch(/^ft_/);
     expect(hello.connectionToken).toMatch(/^ct_/);
+    await registerOAuthCallbackPath("orb", "/oauth/callback");
 
     const requestMessage = waitForJson(ws);
     const ctx = createExecutionContext();
@@ -1296,6 +1459,7 @@ describe("stable environment identity", () => {
   it("reuses a subscriber id and OAuth bindings across tunnel reconnects", async () => {
     const first = await openTunnel("env-route", "amp-thread-9");
     expect(first.hello.environmentId).toBe("amp-thread-9");
+    await registerOAuthCallbackPath("env-route", "/oauth/callback");
 
     const bind = await fetchWorker(
       `https://dev-webhooks.example.com/_router/routes/env-route/subscribers/${first.hello.subscriberId}/oauth-states`,

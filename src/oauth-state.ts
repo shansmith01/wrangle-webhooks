@@ -1,5 +1,11 @@
 import { hmacSha256Base64Url } from "./hmac-sha256";
+import {
+  isAllowlistedOAuthCallbackPath,
+  looksLikeOAuthCallbackPath
+} from "./oauth-callback-path";
 import { timingSafeEqualString } from "./timing-safe-equal";
+
+export { looksLikeOAuthCallbackPath } from "./oauth-callback-path";
 
 /** Prefix on signed OAuth `state` values minted by the sidecar. */
 export const OAUTH_STATE_PREFIX = "dr1.";
@@ -29,6 +35,7 @@ export type DeliveryClass =
   | "oauth"
   | "fanout"
   | "oauth_callback_incomplete"
+  | "oauth_callback_not_registered"
   | "oauth_method_not_allowed";
 
 /** True when the HTTP method is a GET or POST OAuth callback (not PUT/PATCH/DELETE). */
@@ -37,10 +44,9 @@ export function isOAuthCallbackMethod(method: string): boolean {
   return upper === "GET" || upper === "POST";
 }
 
-/** True when the remaining path looks like an OAuth, auth, or oolio callback. */
+/** @deprecated Use looksLikeOAuthCallbackPath — regex no longer grants reverse proxy. */
 export function isOAuthCallbackPath(remainingPath: string): boolean {
-  const path = remainingPath.replace(/\/+$/, "") || "/";
-  return /\/(oauth|auth|oolio)\/callback(?:\/|$)/i.test(path);
+  return looksLikeOAuthCallbackPath(remainingPath);
 }
 
 /** True when query or form includes an OAuth `code` or `error` result. */
@@ -52,16 +58,24 @@ export function hasOAuthCodeOrError(
   return Boolean(code || error);
 }
 
-/** Choose OAuth proxy vs webhook fan-out from path, query, form fields, and method. */
+/**
+ * Choose OAuth proxy vs webhook fan-out from allowlist, path heuristic, query, form, and method.
+ * Only admin-allowlisted remaining paths are reverse-proxied. Heuristic callback paths and
+ * signed `dr1.` state on non-allowlisted paths are rejected with no fan-out.
+ */
 export function classifyDelivery(options: {
   remainingPath: string;
   search: string;
   form: URLSearchParams | null;
   method?: string;
+  allowedCallbackPaths?: readonly string[];
 }): DeliveryClass {
   const { state, code, error } = oauthCallbackResultParams(options.search, options.form);
   const hasResult = Boolean(code || error);
-  if (isOAuthCallbackPath(options.remainingPath)) {
+  const allowed = options.allowedCallbackPaths ?? [];
+  const allowlisted = isAllowlistedOAuthCallbackPath(options.remainingPath, allowed);
+
+  if (allowlisted) {
     if (!hasResult) {
       return "oauth_callback_incomplete";
     }
@@ -70,12 +84,14 @@ export function classifyDelivery(options: {
     }
     return "oauth";
   }
-  if (state?.startsWith(OAUTH_STATE_PREFIX) && hasResult) {
-    if (options.method && !isOAuthCallbackMethod(options.method)) {
-      return "oauth_method_not_allowed";
-    }
-    return "oauth";
+
+  const reserved =
+    looksLikeOAuthCallbackPath(options.remainingPath) ||
+    Boolean(state?.startsWith(OAUTH_STATE_PREFIX));
+  if (reserved) {
+    return "oauth_callback_not_registered";
   }
+
   return "fanout";
 }
 

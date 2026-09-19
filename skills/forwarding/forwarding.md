@@ -31,12 +31,11 @@ Webhooks use **fan-out**. Every active subscriber receives a copy. The public ca
 
 OAuth callbacks use **correlated single-target routing** and **return the subscriber response** (status, `Location`, body). `Set-Cookie` is not copied onto the Worker host. That is required so authorization-code exchanges and redirects work. One `code` must go only to the subscriber that created its `state`.
 
-A request is treated as OAuth when:
+A request is treated as OAuth when the remaining path is on the **admin allowlist** for that route **and** the query or form body has `code` or `error`. Register exact remaining paths (for example `/oauth/callback` or `/api/auth/callback/google`) in the dashboard or with `PUT /_router/oauth-callback-paths` / `PUT /_router/routes/<routeId>/oauth-callback-paths` using the operator secret. Minted route join tokens cannot expand the allowlist. Empty allowlist means no OAuth reverse proxy.
 
-- the remaining path is `/oauth/callback`, `/auth/callback`, `/oolio/callback`, or a nested provider callback such as `/api/auth/callback/google` or `/api/integrations/oolio/callback`, **and** the query or form body has `code` or `error`, or
-- the query or form body has a **signed** `wrapOAuthState()` value (`dr1.` prefix) plus `code` or `error`
+Paths that look like `/oauth/callback` or `/auth/callback` (including nested forms such as `/api/auth/callback/google`) but are **not** registered return `404` `{ "error": "oauth_callback_not_registered" }` with no proxy and no fan-out. The same reject applies when a signed `wrapOAuthState()` value (`dr1.` prefix) appears on a non-allowlisted path. Register product-specific callbacks such as `/api/integrations/oolio/callback` explicitly; they are not special-cased.
 
-A callback path with neither `code` nor `error` is `404` `{ "error": "oauth_callback_incomplete" }`: not a reverse proxy and not webhook fan-out. OAuth proxy is GET or POST only (`405` `{ "error": "oauth_method_not_allowed" }` otherwise). Arbitrary paths that merely include `state` and `code` are webhook fan-out, not a reverse proxy. Bound app-generated `state` still works on complete callback paths. Remaining paths with a `..` path-traversal segment after decode are `404` `{ "error": "route_not_found" }` with no forwarding, Durable Object delivery, or inbound-log row.
+An allowlisted callback path with neither `code` nor `error` is `404` `{ "error": "oauth_callback_incomplete" }`: not a reverse proxy and not webhook fan-out. OAuth proxy is GET or POST only (`405` `{ "error": "oauth_method_not_allowed" }` otherwise). Arbitrary paths that merely include `state` and `code` (without a signed `dr1.` state) are webhook fan-out, not a reverse proxy. Bound app-generated `state` still works on complete allowlisted callback paths. Remaining paths with a `..` path-traversal segment after decode are `404` `{ "error": "route_not_found" }` with no forwarding, Durable Object delivery, or inbound-log row.
 
 Routing order:
 

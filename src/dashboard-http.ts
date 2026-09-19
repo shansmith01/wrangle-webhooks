@@ -13,11 +13,12 @@ import {
   type DashboardRoute
 } from "./dashboard";
 import { publicPathForRouteId } from "./connection-log";
+import { validateOAuthCallbackPath } from "./oauth-callback-path";
 import { routerIndexStub } from "./router-index";
-import { durableObjectNameForRoute } from "./route-id";
+import { durableObjectNameForRoute, isAllowedRouteId } from "./route-id";
 import { timingSafeEqualString } from "./timing-safe-equal";
 
-/** Handle `/dashboard` HTML, login, logout, and status JSON. */
+/** Handle `/dashboard` HTML, login, logout, OAuth callback path CRUD, and status JSON. */
 export async function handleDashboard(
   request: Request,
   env: Env,
@@ -59,11 +60,26 @@ export async function handleDashboard(
     });
   }
 
+  const authed = await requireDashboardAuth(request, password);
+
+  if (pathname === "/dashboard/oauth-callback-paths" && request.method === "POST") {
+    if (!authed) {
+      return unauthorizedDashboard();
+    }
+    return addDashboardOAuthCallbackPath(request, env);
+  }
+
+  if (pathname === "/dashboard/oauth-callback-paths/delete" && request.method === "POST") {
+    if (!authed) {
+      return unauthorizedDashboard();
+    }
+    return deleteDashboardOAuthCallbackPath(request, env);
+  }
+
   if (request.method !== "GET" && request.method !== "HEAD") {
     return Response.json({ error: "method_not_allowed" }, { status: 405 });
   }
 
-  const authed = await requireDashboardAuth(request, password);
   if (pathname === "/dashboard/status") {
     if (!authed) {
       return unauthorizedDashboard();
@@ -117,14 +133,51 @@ async function readDashboardLoginPassword(request: Request): Promise<string> {
   return typeof password === "string" ? password : "";
 }
 
+async function addDashboardOAuthCallbackPath(request: Request, env: Env): Promise<Response> {
+  const { routeId, path } = await readOAuthCallbackPathForm(request);
+  if (!isAllowedRouteId(routeId) || !validateOAuthCallbackPath(path)) {
+    return Response.redirect(new URL("/dashboard", request.url).toString(), 303);
+  }
+  await routerIndexStub(env).addOAuthCallbackPath(routeId, path);
+  return Response.redirect(new URL("/dashboard", request.url).toString(), 303);
+}
+
+async function deleteDashboardOAuthCallbackPath(request: Request, env: Env): Promise<Response> {
+  const { routeId, path } = await readOAuthCallbackPathForm(request);
+  if (!isAllowedRouteId(routeId) || !validateOAuthCallbackPath(path)) {
+    return Response.redirect(new URL("/dashboard", request.url).toString(), 303);
+  }
+  await routerIndexStub(env).removeOAuthCallbackPath(routeId, path);
+  return Response.redirect(new URL("/dashboard", request.url).toString(), 303);
+}
+
+async function readOAuthCallbackPathForm(
+  request: Request
+): Promise<{ routeId: string; path: string }> {
+  const form = await request.formData();
+  const routeRaw = form.get("routeId");
+  const pathRaw = form.get("path");
+  const routeId =
+    typeof routeRaw === "string" ? routeRaw.trim() : "";
+  const path = typeof pathRaw === "string" ? pathRaw.trim() : "";
+  return { routeId, path };
+}
+
 async function loadDashboardStatus(env: Env) {
   const index = routerIndexStub(env);
-  const [routes, connectionLog, inboundLog] = await Promise.all([
+  const [routes, connectionLog, inboundLog, oauthCallbackPaths] = await Promise.all([
     loadDashboardRoutes(env),
     index.listConnectionEvents(),
-    index.listInboundEvents()
+    index.listInboundEvents(),
+    index.listAllOAuthCallbackPaths()
   ]);
-  return dashboardStatus(Boolean(env.DEV_ROUTER_SECRET), routes, connectionLog, inboundLog);
+  return dashboardStatus(
+    Boolean(env.DEV_ROUTER_SECRET),
+    routes,
+    connectionLog,
+    inboundLog,
+    oauthCallbackPaths
+  );
 }
 
 async function loadDashboardRoutes(env: Env): Promise<DashboardRoute[]> {

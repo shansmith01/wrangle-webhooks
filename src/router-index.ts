@@ -17,6 +17,14 @@ import {
   listInboundLogEvents,
   migrateInboundLog
 } from "./inbound-log-storage";
+import type { OAuthCallbackPathRow } from "./oauth-callback-path";
+import {
+  deleteOAuthCallbackPath,
+  listAllOAuthCallbackPaths,
+  listOAuthCallbackPathsForRoute,
+  migrateOAuthCallbackPaths,
+  upsertOAuthCallbackPath
+} from "./oauth-callback-path-storage";
 import { durableObjectNameForIndex, isAllowedRouteId, isValidRouteId } from "./route-id";
 
 interface RouteRow {
@@ -30,7 +38,7 @@ export function routerIndexStub(env: Env): DurableObjectStub<RouterIndex> {
   return env.ROUTER_INDEX.getByName(durableObjectNameForIndex());
 }
 
-/** Router-wide index of active routes, connection audit log, and inbound request metadata. */
+/** Router-wide index of active routes, connection audit log, inbound metadata, and OAuth callback allowlist. */
 export class RouterIndex extends DurableObject<Env> {
   constructor(ctx: DurableObjectState, env: Env) {
     super(ctx, env);
@@ -48,6 +56,7 @@ export class RouterIndex extends DurableObject<Env> {
     `);
     migrateConnectionLog(this.ctx.storage.sql);
     migrateInboundLog(this.ctx.storage.sql);
+    migrateOAuthCallbackPaths(this.ctx.storage.sql);
   }
 
   async addRoute(routeId: string): Promise<void> {
@@ -122,5 +131,28 @@ export class RouterIndex extends DurableObject<Env> {
   /** Inbound public requests, newest first, metadata only (no body, query, or headers). */
   async listInboundEvents(limit?: number): Promise<InboundLogEvent[]> {
     return listInboundLogEvents(this.ctx.storage.sql, limit);
+  }
+
+  /** Remaining paths allowlisted for OAuth reverse proxy on this route. */
+  async listOAuthCallbackPaths(routeId: string): Promise<string[]> {
+    return listOAuthCallbackPathsForRoute(this.ctx.storage.sql, routeId);
+  }
+
+  /** All allowlisted OAuth callback paths across routes, for the dashboard. */
+  async listAllOAuthCallbackPaths(): Promise<OAuthCallbackPathRow[]> {
+    return listAllOAuthCallbackPaths(this.ctx.storage.sql);
+  }
+
+  /** Register an exact remaining path for OAuth reverse proxy on this route. */
+  async addOAuthCallbackPath(
+    routeId: string,
+    remainingPath: string
+  ): Promise<OAuthCallbackPathRow | null> {
+    return upsertOAuthCallbackPath(this.ctx.storage.sql, routeId, remainingPath);
+  }
+
+  /** Remove an allowlisted OAuth callback remaining path for this route. */
+  async removeOAuthCallbackPath(routeId: string, remainingPath: string): Promise<boolean> {
+    return deleteOAuthCallbackPath(this.ctx.storage.sql, routeId, remainingPath);
   }
 }

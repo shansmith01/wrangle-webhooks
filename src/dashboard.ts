@@ -5,6 +5,7 @@ import {
   formatInboundBodyBytes,
   type InboundLogEvent
 } from "./inbound-log";
+import type { OAuthCallbackPathRow } from "./oauth-callback-path";
 
 /** HTML dashboard snapshot of active routes and subscribers. */
 export interface DashboardRoute {
@@ -21,6 +22,7 @@ export interface DashboardStatus {
   routeCount: number;
   subscriberCount: number;
   routes: DashboardRoute[];
+  oauthCallbackPaths: OAuthCallbackPathRow[];
   inboundLog: InboundLogEvent[];
   connectionLog: ConnectionLogEvent[];
 }
@@ -30,7 +32,8 @@ export function dashboardStatus(
   secretConfigured: boolean,
   routes: DashboardRoute[],
   connectionLog: ConnectionLogEvent[] = [],
-  inboundLog: InboundLogEvent[] = []
+  inboundLog: InboundLogEvent[] = [],
+  oauthCallbackPaths: OAuthCallbackPathRow[] = []
 ): DashboardStatus {
   const active = routes.filter((route) => route.subscribers.length > 0);
   return {
@@ -40,6 +43,7 @@ export function dashboardStatus(
     routeCount: active.length,
     subscriberCount: active.reduce((sum, route) => sum + route.subscribers.length, 0),
     routes: active,
+    oauthCallbackPaths,
     inboundLog,
     connectionLog
   };
@@ -129,6 +133,36 @@ const DASHBOARD_CSS = `
       margin-bottom: 12px;
     }
     .error { color: var(--warn); margin: 0 0 12px; }
+    .oauth-form {
+      display: grid;
+      grid-template-columns: minmax(120px, 1fr) minmax(180px, 2fr) auto;
+      gap: 8px;
+      align-items: end;
+      margin-top: 12px;
+    }
+    .oauth-form label { display: block; color: var(--muted); font-size: 12px; text-transform: uppercase; letter-spacing: 0.04em; margin-bottom: 4px; }
+    .oauth-form input {
+      width: 100%;
+      font: inherit;
+      color: var(--text);
+      background: var(--bg);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 8px 10px;
+    }
+    .oauth-form button, .oauth-delete button {
+      font: inherit;
+      color: var(--text);
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 8px 12px;
+      cursor: pointer;
+    }
+    .oauth-delete { margin: 0; }
+    @media (max-width: 720px) {
+      .oauth-form { grid-template-columns: 1fr; }
+    }
 `;
 
 export function dashboardLoginHtml(error?: string): string {
@@ -188,6 +222,9 @@ export function dashboardHtml(status: DashboardStatus): string {
     </div>
     <h2 class="section-title">Live connections</h2>
     <div id="routes">${renderRoutes(status.routes)}</div>
+    <h2 class="section-title">OAuth callback paths</h2>
+    <p class="hint">Only these remaining paths are reverse-proxied. Unregistered <code>/oauth/callback</code> and <code>/auth/callback</code> URLs are rejected (not proxied, not webhook fan-out). Register the redirect URI before pointing the provider at the Public URL.</p>
+    <div id="oauth-callbacks">${renderOAuthCallbackPaths(status.oauthCallbackPaths)}</div>
     <h2 class="section-title">Inbound requests</h2>
     <p class="hint">Metadata only. Bodies, query strings, and headers are not stored.</p>
     <div id="inbound">${renderInboundLog(status.inboundLog)}</div>
@@ -211,6 +248,7 @@ export function dashboardHtml(status: DashboardStatus): string {
         <div class="card"><div class="label">Active routes</div><div class="value">\${data.routeCount}</div></div>
         <div class="card"><div class="label">Connections</div><div class="value">\${data.subscriberCount}</div></div>\`;
       document.getElementById("routes").innerHTML = routesHtml(data.routes);
+      document.getElementById("oauth-callbacks").innerHTML = oauthCallbackHtml(data.oauthCallbackPaths || []);
       document.getElementById("inbound").innerHTML = inboundHtml(data.inboundLog || []);
       document.getElementById("history").innerHTML = historyHtml(data.connectionLog || []);
       document.getElementById("updated").textContent = fmt(data.generatedAt);
@@ -233,6 +271,42 @@ export function dashboardHtml(status: DashboardStatus): string {
           <div class="table-wrap"><table><thead><tr><th>Subscriber</th><th>Environment id</th><th>Transport</th><th>Target</th><th>Last heartbeat</th><th>Expires</th></tr></thead>
           <tbody>\${rows}</tbody></table></div></div>\`;
       }).join("");
+    }
+    function oauthCallbackHtml(paths) {
+      const empty = !paths.length
+        ? '<p class="hint warn">No OAuth callback paths registered. Heuristic <code>/oauth/callback</code> and <code>/auth/callback</code> URLs are rejected — not a reverse proxy and not webhook fan-out.</p>'
+        : "";
+      const rows = paths.map((row) => \`
+        <tr>
+          <td><code>\${esc(row.routeId === "" ? "/* (root)" : "/" + row.routeId + "/*")}</code></td>
+          <td><code>\${esc(row.remainingPath)}</code></td>
+          <td>\${fmt(row.createdAt)}</td>
+          <td>
+            <form class="oauth-delete" method="post" action="/dashboard/oauth-callback-paths/delete">
+              <input type="hidden" name="routeId" value="\${esc(row.routeId)}" />
+              <input type="hidden" name="path" value="\${esc(row.remainingPath)}" />
+              <button type="submit">Remove</button>
+            </form>
+          </td>
+        </tr>\`).join("");
+      return \`<div class="card">
+        \${empty}
+        <div class="table-wrap"><table>
+          <thead><tr><th>Route</th><th>Remaining path</th><th>Registered</th><th></th></tr></thead>
+          <tbody>\${rows}</tbody>
+        </table></div>
+        <form class="oauth-form" method="post" action="/dashboard/oauth-callback-paths">
+          <div>
+            <label for="oauth-route">Route id</label>
+            <input id="oauth-route" name="routeId" placeholder="(empty = root)" autocomplete="off" />
+          </div>
+          <div>
+            <label for="oauth-path">Remaining path</label>
+            <input id="oauth-path" name="path" placeholder="/api/auth/callback/google" required autocomplete="off" />
+          </div>
+          <button type="submit">Register</button>
+        </form>
+      </div>\`;
     }
     function inboundHtml(events) {
       if (!events.length) {
@@ -335,6 +409,48 @@ function renderRoutes(routes: DashboardRoute[]): string {
         <tbody>${rows}</tbody></table></div></div>`;
     })
     .join("");
+}
+
+function renderOAuthCallbackPaths(paths: OAuthCallbackPathRow[]): string {
+  const empty =
+    paths.length === 0
+      ? `<p class="hint warn">No OAuth callback paths registered. Heuristic <code>/oauth/callback</code> and <code>/auth/callback</code> URLs are rejected — not a reverse proxy and not webhook fan-out.</p>`
+      : "";
+  const rows = paths
+    .map((row) => {
+      const routeLabel = row.routeId === "" ? "/* (root)" : publicPathForRouteId(row.routeId);
+      return `<tr>
+            <td><code>${escapeHtml(routeLabel)}</code></td>
+            <td><code>${escapeHtml(row.remainingPath)}</code></td>
+            <td>${escapeHtml(new Date(row.createdAt).toISOString())}</td>
+            <td>
+              <form class="oauth-delete" method="post" action="/dashboard/oauth-callback-paths/delete">
+                <input type="hidden" name="routeId" value="${escapeHtml(row.routeId)}" />
+                <input type="hidden" name="path" value="${escapeHtml(row.remainingPath)}" />
+                <button type="submit">Remove</button>
+              </form>
+            </td>
+          </tr>`;
+    })
+    .join("");
+  return `<div class="card">
+        ${empty}
+        <div class="table-wrap"><table>
+          <thead><tr><th>Route</th><th>Remaining path</th><th>Registered</th><th></th></tr></thead>
+          <tbody>${rows}</tbody>
+        </table></div>
+        <form class="oauth-form" method="post" action="/dashboard/oauth-callback-paths">
+          <div>
+            <label for="oauth-route">Route id</label>
+            <input id="oauth-route" name="routeId" placeholder="(empty = root)" autocomplete="off" />
+          </div>
+          <div>
+            <label for="oauth-path">Remaining path</label>
+            <input id="oauth-path" name="path" placeholder="/api/auth/callback/google" required autocomplete="off" />
+          </div>
+          <button type="submit">Register</button>
+        </form>
+      </div>`;
 }
 
 function renderInboundLog(events: InboundLogEvent[]): string {

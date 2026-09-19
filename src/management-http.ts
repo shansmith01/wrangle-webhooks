@@ -8,6 +8,7 @@ import {
   requireManagementAuth,
   unauthorizedManagementResponse
 } from "./management-auth";
+import { validateOAuthCallbackPath } from "./oauth-callback-path";
 import { routerIndexStub } from "./router-index";
 import { durableObjectNameForRoute, isAllowedEnvironmentId, isAllowedRouteId } from "./route-id";
 import { TargetBaseUrlError, validateTargetBaseUrl } from "./target-base-url";
@@ -19,11 +20,13 @@ const HEARTBEAT =
 const DEREGISTER = /^\/_router\/routes\/([^/]+)\/subscribers\/([^/]+)$/;
 const OAUTH_BIND = /^\/_router\/routes\/([^/]+)\/subscribers\/([^/]+)\/oauth-states$/;
 const CREDENTIAL = /^\/_router\/routes\/([^/]+)\/credential$/;
+const NAMED_OAUTH_CALLBACK_PATHS = /^\/_router\/routes\/([^/]+)\/oauth-callback-paths$/;
 const DEFAULT_REGISTER = /^\/_router\/subscribers$/;
 const DEFAULT_HEARTBEAT = /^\/_router\/subscribers\/([^/]+)\/heartbeat$/;
 const DEFAULT_DEREGISTER = /^\/_router\/subscribers\/([^/]+)$/;
 const DEFAULT_OAUTH_BIND = /^\/_router\/subscribers\/([^/]+)\/oauth-states$/;
 const DEFAULT_CREDENTIAL = /^\/_router\/credential$/;
+const DEFAULT_OAUTH_CALLBACK_PATHS = /^\/_router\/oauth-callback-paths$/;
 const DEFAULT_TUNNEL = /^\/_router\/tunnel$/;
 const NAMED_TUNNEL = /^\/_router\/routes\/([^/]+)\/tunnel$/;
 
@@ -51,6 +54,18 @@ export async function handleManagement(
       return denied;
     }
     return handleTunnel(request, env, "");
+  }
+
+  if (DEFAULT_OAUTH_CALLBACK_PATHS.test(url.pathname)) {
+    return handleOAuthCallbackPaths(request, env, "");
+  }
+  const namedOAuthCallbackPaths = url.pathname.match(NAMED_OAUTH_CALLBACK_PATHS);
+  if (namedOAuthCallbackPaths) {
+    return handleOAuthCallbackPaths(
+      request,
+      env,
+      decodeURIComponent(namedOAuthCallbackPaths[1])
+    );
   }
 
   const defaultCredential = DEFAULT_CREDENTIAL.test(url.pathname);
@@ -391,4 +406,83 @@ async function deregisterSubscriber(
     await routerIndexStub(env).removeRoute(routeId);
   }
   return new Response(null, { status: 204 });
+}
+
+/**
+ * Operator-only CRUD for admin-allowlisted OAuth callback remaining paths.
+ * Minted route join tokens cannot expand the reverse-proxy surface.
+ */
+async function handleOAuthCallbackPaths(
+  request: Request,
+  env: Env,
+  routeId: string
+): Promise<Response> {
+  if (!requireManagementAuth(request, env.DEV_ROUTER_SECRET)) {
+    return unauthorizedManagementResponse();
+  }
+  if (!isAllowedRouteId(routeId)) {
+    return Response.json({ error: "invalid_route_id" }, { status: 400 });
+  }
+  const index = routerIndexStub(env);
+
+  if (request.method === "GET") {
+    const paths = await index.listOAuthCallbackPaths(routeId);
+    return Response.json({ routeId, paths });
+  }
+
+  if (request.method === "PUT") {
+    const path = await readOAuthCallbackPathBody(request);
+    if (path === null) {
+      return Response.json({ error: "invalid_json" }, { status: 400 });
+    }
+    if (!validateOAuthCallbackPath(path)) {
+      return Response.json({ error: "invalid_oauth_callback_path" }, { status: 400 });
+    }
+    const row = await index.addOAuthCallbackPath(routeId, path);
+    if (!row) {
+      return Response.json({ error: "invalid_oauth_callback_path" }, { status: 400 });
+    }
+    return Response.json({
+      routeId: row.routeId,
+      path: row.remainingPath,
+      createdAt: row.createdAt
+    });
+  }
+
+  if (request.method === "DELETE") {
+    const path =
+      (await readOAuthCallbackPathBody(request)) ??
+      new URL(request.url).searchParams.get("path");
+    if (!path || !validateOAuthCallbackPath(path)) {
+      return Response.json({ error: "invalid_oauth_callback_path" }, { status: 400 });
+    }
+    const removed = await index.removeOAuthCallbackPath(routeId, path);
+    if (!removed) {
+      return Response.json({ error: "oauth_callback_path_not_found" }, { status: 404 });
+    }
+    return new Response(null, { status: 204 });
+  }
+
+  return Response.json({ error: "method_not_allowed" }, { status: 405 });
+}
+
+async function readOAuthCallbackPathBody(request: Request): Promise<string | null> {
+  if (request.method === "DELETE" && !request.headers.get("content-type")) {
+    return null;
+  }
+  let payload: unknown;
+  try {
+    payload = await request.json();
+  } catch {
+    return null;
+  }
+  if (
+    payload &&
+    typeof payload === "object" &&
+    "path" in payload &&
+    typeof payload.path === "string"
+  ) {
+    return payload.path;
+  }
+  return null;
 }

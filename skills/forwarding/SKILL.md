@@ -3,7 +3,8 @@ name: forwarding
 description: >
   Use when implementing the app that receives @powerboard/dev-router traffic, or
   when explaining public URLs, routeId prefixes, webhook 202 fan-out, OAuth
-  subscriber responses, replica mode (OAuth each new environment before
+  subscriber responses, admin-allowlisted callback paths, oauth_callback_not_registered,
+  replica mode (OAuth each new environment before
   webhook follow-up), state correlation, header stripping, X-Dev-Router-Token,
   reverse tunnels, 10s delivery timeout, route_not_found, oauth_callback_incomplete, or scanner probes.
   Do not load this to install the sidecar or deploy the Worker.
@@ -18,6 +19,8 @@ sources:
   - shansmith01/wrangle-webhooks:src/forward.ts
   - shansmith01/wrangle-webhooks:src/durable-object.ts
   - shansmith01/wrangle-webhooks:src/oauth-state.ts
+  - shansmith01/wrangle-webhooks:src/oauth-callback-path.ts
+  - shansmith01/wrangle-webhooks:src/oauth-callback-path-storage.ts
   - shansmith01/wrangle-webhooks:src/router-headers.ts
   - shansmith01/wrangle-webhooks:src/ingress-urls.ts
   - shansmith01/wrangle-webhooks:src/ingress-body.ts
@@ -56,7 +59,7 @@ Fan-out runs in `waitUntil`. The public caller gets `202` `{ "accepted": true }`
 
 ### Return the subscriber response for OAuth
 
-OAuth callbacks wait for one subscriber and return its status, `Location`, and body. Classification is a callback path (`/oauth/callback`, `/auth/callback`, `/oolio/callback`, or nested forms such as `/api/auth/callback/...` and `/api/integrations/oolio/callback`) **plus** `code` or `error` in the query or form body, or a signed `wrapOAuthState()` `dr1.` value plus `code`/`error`. Only GET and POST are proxied; other methods return `405` `oauth_method_not_allowed`. A callback path with neither `code` nor `error` returns `404` `oauth_callback_incomplete` with no proxy and no fan-out. Arbitrary `?state=&code=` on other paths is webhook fan-out. Remaining paths with a `..` segment after decode return `404` `route_not_found` with no forwarding. Bodies above 768 KiB return `413` `request_too_large` before the Worker buffers them. `Set-Cookie` is not copied onto the Worker host. Correlate with `wrapOAuthState()`, `bindOAuthState()`, or `POST http://127.0.0.1:8790/oauth-states` from the app process. A single subscriber on a complete callback is enough. Multiple subscribers without correlation return `409 oauth_unroutable`.
+OAuth callbacks wait for one subscriber and return its status, `Location`, and body. Classification requires an **admin-allowlisted** remaining path (dashboard or operator `PUT /_router/.../oauth-callback-paths`) **plus** `code` or `error` in the query or form body. Empty allowlist means no reverse proxy. Unregistered paths that look like `/oauth/callback` or `/auth/callback` (nested forms included), or a signed `wrapOAuthState()` `dr1.` value on a non-allowlisted path, return `404` `oauth_callback_not_registered` with no proxy and no fan-out. Allowlisted paths without `code`/`error` return `404` `oauth_callback_incomplete`. Only GET and POST are proxied; other methods return `405` `oauth_method_not_allowed`. Arbitrary `?state=&code=` on other paths is webhook fan-out. Remaining paths with a `..` segment after decode return `404` `route_not_found` with no forwarding. Bodies above 768 KiB return `413` `request_too_large` before the Worker buffers them. `Set-Cookie` is not copied onto the Worker host. Correlate with `wrapOAuthState()`, `bindOAuthState()`, or `POST http://127.0.0.1:8790/oauth-states` from the app process. A single subscriber on a complete callback is enough. Multiple subscribers without correlation return `409 oauth_unroutable`.
 
 ### Preserve method, body, query, and forwardable headers
 
@@ -82,11 +85,11 @@ Source: `src/public-ingress.ts` `handlePublicIngress`
 
 ### HIGH Fanning an OAuth authorization code to every subscriber
 
-Wrong: relying on webhook-style fan-out for `/oauth/callback`.
+Wrong: relying on webhook-style fan-out for `/oauth/callback`, or leaving the callback path unregistered so the Worker cannot proxy.
 
-Correct: wrap or bind `state` so the code reaches only the orb that started the flow. The app process POSTs `/oauth-states` on the sidecar control server.
+Correct: register the remaining path on the allowlist first, then wrap or bind `state` so the code reaches only the orb that started the flow. The app process POSTs `/oauth-states` on the sidecar control server. Unregistered heuristic callback URLs return `404` `oauth_callback_not_registered` (no fan-out).
 
-Source: `src/oauth-state.ts`, `src/durable-object.ts`, `src/control-server.ts`
+Source: `src/oauth-state.ts`, `src/oauth-callback-path.ts`, `src/durable-object.ts`, `src/control-server.ts`
 
 ### HIGH Assuming a named prefix is a secret
 
@@ -100,9 +103,9 @@ Source: `skills/forwarding/forwarding.md`, `src/forward.ts`
 
 Wrong: registering `http://127.0.0.1:3000/oauth/callback` with the OAuth app.
 
-Correct: providers call `https://<router>/<routeId>/...`. The sidecar forwards to the local server.
+Correct: providers call `https://<router>/<routeId>/...`. Register that remaining path on the allowlist, then the sidecar forwards to the local server.
 
-Source: `src/worker.ts`, `src/forward.ts`
+Source: `src/worker.ts`, `src/forward.ts`, `src/oauth-callback-path.ts`
 
 ### MEDIUM Expecting redirects to be followed toward the subscriber
 
@@ -124,9 +127,17 @@ Source: `src/scanner-probe.ts`, `src/ingress-urls.ts`, `src/public-ingress.ts`, 
 
 Wrong: treating `GET /oauth/callback` as a reverse proxy (or as webhook fan-out) when the IdP result is missing.
 
-Correct: `classifyDelivery` requires `code` or `error` on callback paths. Incomplete callbacks return `404` `oauth_callback_incomplete` with no subscriber delivery. Only GET and POST are proxied (`405` `oauth_method_not_allowed` otherwise).
+Correct: `classifyDelivery` requires an allowlisted path plus `code` or `error`. Incomplete allowlisted callbacks return `404` `oauth_callback_incomplete`. Unregistered heuristic callbacks return `404` `oauth_callback_not_registered`. Only GET and POST are proxied (`405` `oauth_method_not_allowed` otherwise).
 
 Source: `src/oauth-state.ts`, `src/public-ingress.ts`
+
+### HIGH Expecting regex path matching to grant reverse proxy
+
+Wrong: assuming any `/auth/callback` URL is reverse-proxied because it matches a built-in pattern.
+
+Correct: only admin-registered remaining paths are proxied. The heuristic reserves callback-shaped traffic for reject (no fan-out); it does not grant proxy. Register paths before pointing the IdP at the Public URL.
+
+Source: `src/oauth-callback-path.ts`, `src/oauth-state.ts`, `src/router-index.ts`
 
 ### HIGH Forwarding client-spoofed X-Original-URL or X-Forwarded-For
 
@@ -154,6 +165,6 @@ Source: `skills/forwarding/forwarding.md`, `skills/connect/connect.md`
 
 ## Completion
 
-A live subscriber receives the stripped path, including query string. Webhook callers see `202`. OAuth callers see the subscriber response. A callback path without `code` or `error` is `404` `oauth_callback_incomplete`. Non-GET/POST OAuth is `405` `oauth_method_not_allowed`. Oversized bodies are `413` `request_too_large`. If nothing is registered, the public client has `404` `route_not_found`. Credential dumps, PHP leftovers, `..` remaining paths, and similar scanner probes get the same `404` without forwarding, Durable Object lookup, or inbound-log rows.
+A live subscriber receives the stripped path, including query string. Webhook callers see `202`. OAuth callers see the subscriber response only when the remaining path is allowlisted. A callback path without `code` or `error` is `404` `oauth_callback_incomplete`. Unregistered heuristic `/oauth/callback` or `/auth/callback` URLs (and signed `dr1.` state on non-allowlisted paths) are `404` `oauth_callback_not_registered`. Non-GET/POST OAuth is `405` `oauth_method_not_allowed`. Oversized bodies are `413` `request_too_large`. If nothing is registered, the public client has `404` `route_not_found`. Credential dumps, PHP leftovers, `..` remaining paths, and similar scanner probes get the same `404` without forwarding, Durable Object lookup, or inbound-log rows.
 
 If this is a **new** environment, also say that replica mode is incomplete until the operator OAuth-registers with the third-party provider here. Point them at the router Public URL as the redirect URI.

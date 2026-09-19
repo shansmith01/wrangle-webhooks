@@ -190,7 +190,21 @@ Task documentation and Agent Skills:
 
 **Webhooks** fan out to every subscriber. The public caller receives `202` `{ "accepted": true }` as soon as the Worker accepts fan-out. That is **not** delivery proof: subscriber status codes are not propagated, and a 202 can succeed while a replica never handled the request. Confirm the payload in **each** subscriber’s logs before treating a fan-out test as successful.
 
-**OAuth** is single-target and returns the subscriber response (status, `Location`, body) for callback paths (`/oauth/callback`, `/auth/callback`, `/oolio/callback`, nested `/api/auth/callback/...` or `/api/integrations/oolio/callback`) that include `code` or `error`, or a signed `wrapOAuthState()` value plus `code`/`error`. Only GET and POST are proxied (`405` `{ "error": "oauth_method_not_allowed" }` otherwise). A callback path with neither is `404` `{ "error": "oauth_callback_incomplete" }` (no proxy, no fan-out). `Set-Cookie` is not copied onto the Worker host. Arbitrary `?state=&code=` on other paths is webhook fan-out, not a reverse proxy. Correlate with `wrapOAuthState()` / `bindOAuthState()` on the sidecar connection, or `POST http://127.0.0.1:8790/oauth-states` from the app process. If a route has exactly one subscriber, that subscriber is used. Multiple subscribers without a matching `state` return `409` `{ "error": "oauth_unroutable" }`.
+**OAuth** is single-target and returns the subscriber response (status, `Location`, body) only for **admin-allowlisted** remaining paths that include `code` or `error`. Register exact paths (for example `/oauth/callback` or `/api/auth/callback/google`) in the dashboard or with the operator secret:
+
+```bash
+curl -X PUT "$DEV_ROUTER_URL/_router/oauth-callback-paths" \
+  -H "Authorization: Bearer $DEV_ROUTER_SECRET" \
+  -H "Content-Type: application/json" \
+  -d '{"path":"/oauth/callback"}'
+# named route:
+curl -X PUT "$DEV_ROUTER_URL/_router/routes/nomads/oauth-callback-paths" \
+  -H "Authorization: Bearer $DEV_ROUTER_SECRET" \
+  -H "Content-Type: application/json" \
+  -d '{"path":"/api/auth/callback/google"}'
+```
+
+Minted route join tokens cannot expand the allowlist. An empty allowlist means **no** OAuth reverse proxy. Paths that look like `/oauth/callback` or `/auth/callback` (including nested forms) but are not registered return `404` `{ "error": "oauth_callback_not_registered" }` with no proxy and no fan-out — so missing config is visible and authorization codes are not sprayed to every replica. The same reject applies when a signed `wrapOAuthState()` `dr1.` value appears on a non-allowlisted path. Allowlisted paths without `code` or `error` return `404` `{ "error": "oauth_callback_incomplete" }`. Only GET and POST are proxied (`405` `{ "error": "oauth_method_not_allowed" }` otherwise). `Set-Cookie` is not copied onto the Worker host. Arbitrary `?state=&code=` on other paths is webhook fan-out, not a reverse proxy. Correlate with `wrapOAuthState()` / `bindOAuthState()` on the sidecar connection, or `POST http://127.0.0.1:8790/oauth-states` from the app process. If a route has exactly one subscriber, that subscriber is used. Multiple subscribers without a matching `state` return `409` `{ "error": "oauth_unroutable" }`.
 
 No subscribers → `404` `{ "error": "route_not_found" }`. Scanner probes (`/phpinfo.php`, `/credentials.json`, `/.env`, and similar) and remaining paths with a `..` segment after decode get the same `404` without forwarding or an inbound-log row.
 
@@ -211,7 +225,7 @@ npx wrangler secret put DEV_ROUTER_DASHBOARD_PASSWORD
 
 Bind a Custom Domain such as `dev-webhooks.example.com` on a Cloudflare zone (not only `*.workers.dev`) so WAF custom rules and Bot Fight Mode can drop internet scanners before the Worker. Point every client at that origin with `DEV_ROUTER_URL`. Mint a root-scoped credential with `npx dev-router token`, or a named-route credential with `npx dev-router token --route <routeId>`, using the operator secret; give orbs only that token. Clients need outbound HTTPS and WSS to that host.
 
-`GET /dashboard` is a password form; `POST /dashboard/login` with `DEV_ROUTER_DASHBOARD_PASSWORD` sets an HttpOnly `SameSite=Strict` cookie (`Path=/dashboard`) so it is not sent on webhook or OAuth URLs. JSON is `GET /dashboard/status` (`/dashboard.json` redirects there). HTML fetches that JSON rather than inlining it, and is served with CSP `default-src 'none'`. They list live routes, subscriber counts, transport, and environment id; an **inbound request** stream (method, route, path, public status, subscriber count, body size); and a **connection history** audit log (connect, disconnect, and rejected joins, including `CF-Connecting-IP` when present). Inbound rows are metadata only: no bodies, query strings, or headers. Inbound history is kept for 7 days (capped at 5,000 events). Connection history is kept for 90 days (capped at 2,000 events) even after a subscriber disconnects. They do not return `DEV_ROUTER_SECRET`, route credentials, connection tokens, or forward tokens. Management bearer auth applies only to `/_router/*`.
+`GET /dashboard` is a password form; `POST /dashboard/login` with `DEV_ROUTER_DASHBOARD_PASSWORD` sets an HttpOnly `SameSite=Strict` cookie (`Path=/dashboard`) so it is not sent on webhook or OAuth URLs. JSON is `GET /dashboard/status` (`/dashboard.json` redirects there). HTML fetches that JSON rather than inlining it, and is served with CSP `default-src 'none'`. They list live routes, subscriber counts, transport, and environment id; **OAuth callback path** allowlist (register/remove remaining paths; empty state warns that heuristic callback URLs are rejected); an **inbound request** stream (method, route, path, public status, subscriber count, body size); and a **connection history** audit log (connect, disconnect, and rejected joins, including `CF-Connecting-IP` when present). Inbound rows are metadata only: no bodies, query strings, or headers. Inbound history is kept for 7 days (capped at 5,000 events). Connection history is kept for 90 days (capped at 2,000 events) even after a subscriber disconnects. They do not return `DEV_ROUTER_SECRET`, route credentials, connection tokens, or forward tokens. Management bearer auth applies only to `/_router/*` (operator secret required to mutate OAuth callback paths).
 
 ## Agent Skills (TanStack Intent)
 

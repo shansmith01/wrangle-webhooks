@@ -47,7 +47,8 @@ export async function handlePublicIngress(
           remainingPath: url.pathname || "/",
           search: url.search,
           form: null,
-          method: request.method
+          method: request.method,
+          allowedCallbackPaths: []
         })
       ),
       result: "rejected",
@@ -63,6 +64,10 @@ export async function handlePublicIngress(
     return scannerProbeNotFound();
   }
 
+  const allowedCallbackPaths = await routerIndexStub(env).listOAuthCallbackPaths(
+    resolved.routeId
+  );
+
   const capped = await readCappedIngressBody(request);
   if (!capped.ok) {
     const requestId = newPublicRequestId();
@@ -77,7 +82,8 @@ export async function handlePublicIngress(
           remainingPath: resolved.remainingPath,
           search: url.search,
           form: null,
-          method: request.method
+          method: request.method,
+          allowedCallbackPaths
         })
       ),
       result: "rejected",
@@ -109,9 +115,27 @@ export async function handlePublicIngress(
     remainingPath: resolved.remainingPath,
     search: url.search,
     form,
-    method: request.method
+    method: request.method,
+    allowedCallbackPaths
   });
   const kind = inboundLogKind(delivery);
+
+  if (delivery === "oauth_callback_not_registered") {
+    await recordPublicInboundLog(env, {
+      id: requestId,
+      method: request.method,
+      routeId: resolved.routeId,
+      remainingPath: resolved.remainingPath,
+      search: url.search,
+      kind,
+      result: "rejected",
+      status: 404,
+      error: "oauth_callback_not_registered",
+      subscriberCount: resolved.subscribers.length,
+      bodyBytes: inboundBodyBytes(request, body)
+    });
+    return Response.json({ error: "oauth_callback_not_registered" }, { status: 404 });
+  }
 
   if (delivery === "oauth_callback_incomplete") {
     await recordPublicInboundLog(env, {

@@ -22,6 +22,7 @@ export type InboundLogError =
   | "oauth_unroutable"
   | "oauth_subscriber_not_found"
   | "oauth_callback_incomplete"
+  | "oauth_callback_not_registered"
   | "oauth_method_not_allowed"
   | "request_too_large"
   | "subscriber_unreachable";
@@ -65,6 +66,7 @@ const ERRORS = new Set<string>([
   "oauth_unroutable",
   "oauth_subscriber_not_found",
   "oauth_callback_incomplete",
+  "oauth_callback_not_registered",
   "oauth_method_not_allowed",
   "request_too_large",
   "subscriber_unreachable"
