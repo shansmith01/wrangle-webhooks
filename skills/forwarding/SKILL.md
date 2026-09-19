@@ -27,11 +27,14 @@ sources:
   - shansmith01/wrangle-webhooks:src/public-ingress.ts
   - shansmith01/wrangle-webhooks:src/scanner-probe.ts
   - shansmith01/wrangle-webhooks:src/router-index.ts
+  - shansmith01/wrangle-webhooks:src/webhook-path-filter.ts
+  - shansmith01/wrangle-webhooks:src/webhook-filter-path.ts
+  - shansmith01/wrangle-webhooks:src/webhook-fanout-settings-storage.ts
 ---
 
 # Request forwarding contract
 
-External services call the Worker. Webhooks fan out to every subscriber and the public caller gets `202`. OAuth callbacks are routed to one subscriber and that subscriber’s response is returned. Delivery is either a reverse-tunnel WebSocket or `fetch()` to a public `https://` target.
+External services call the Worker. Webhooks fan out to every subscriber by default and the public caller gets `202`. Operators can deny all webhooks on a route, skip or only-send remaining-path prefixes, or mute one sidecar with `--no-webhooks`. OAuth callbacks are routed to one subscriber and that subscriber’s response is returned. Delivery is either a reverse-tunnel WebSocket or `fetch()` to a public `https://` target.
 
 ## Setup
 
@@ -79,9 +82,9 @@ Webhook fan-out assumes every subscriber can do authenticated follow-up. That is
 
 Wrong: treating a public `202` as proof the app returned `200`, or as proof every replica received the webhook.
 
-Correct: webhook fan-out only accepts the public hop. Inspect **each** subscriber’s logs for the real status. OAuth is the opposite: the public response **is** the subscriber response.
+Correct: webhook fan-out only accepts the public hop. Inspect **each** subscriber’s logs for the real status. Route deny-all, path skip/only rules, and `--no-webhooks` can skip delivery while the caller still sees `202`. OAuth is the opposite: the public response **is** the subscriber response.
 
-Source: `src/public-ingress.ts` `handlePublicIngress`
+Source: `src/public-ingress.ts` `handlePublicIngress`, `src/webhook-path-filter.ts`
 
 ### HIGH Fanning an OAuth authorization code to every subscriber
 

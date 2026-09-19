@@ -53,15 +53,24 @@ export interface TunnelErrorMessage {
 export type TunnelServerMessage = TunnelHelloMessage | TunnelRequestMessage;
 export type TunnelClientMessage = TunnelResponseMessage | TunnelErrorMessage;
 
-export function managementTunnelPath(routeId: string, environmentId?: string): string {
+export function managementTunnelPath(
+  routeId: string,
+  environmentId?: string,
+  acceptWebhooks = true
+): string {
   const path =
     routeId === ""
       ? "/_router/tunnel"
       : `/_router/routes/${encodeURIComponent(routeId)}/tunnel`;
-  if (!environmentId) {
-    return path;
+  const params = new URLSearchParams();
+  if (environmentId) {
+    params.set("environmentId", environmentId);
   }
-  return `${path}?environmentId=${encodeURIComponent(environmentId)}`;
+  if (!acceptWebhooks) {
+    params.set("acceptWebhooks", "0");
+  }
+  const query = params.toString();
+  return query ? `${path}?${query}` : path;
 }
 
 export function managementCredentialPath(routeId: string): string {

@@ -14,6 +14,7 @@ export interface Subscriber {
   lastHeartbeatAt: number;
   expiresAt: number;
   environmentId: string | null;
+  acceptWebhooks: boolean;
 }
 
 /** JSON body returned when a sidecar registers a subscriber. */
@@ -38,6 +39,7 @@ export interface ConnectOptions {
   localUrl?: string;
   port?: number;
   environmentId?: string;
+  acceptWebhooks?: boolean;
 }
 
 /** Live sidecar subscription to a shared Worker route. */
@@ -50,6 +52,7 @@ export interface Connection {
   forwardToken: string;
   connectionToken: string;
   environmentId?: string;
+  readonly acceptWebhooks: boolean;
   readonly connected: boolean;
   readonly connectionState: ConnectionStateReason;
   whenReady(): Promise<void>;

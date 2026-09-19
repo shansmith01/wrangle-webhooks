@@ -14,6 +14,11 @@ import {
 } from "./dashboard";
 import { publicPathForRouteId } from "./connection-log";
 import { validateOAuthCallbackPath } from "./oauth-callback-path";
+import {
+  parseWebhookFilterEnvironmentId,
+  validateWebhookFanoutRuleMode,
+  validateWebhookFilterPath
+} from "./webhook-filter-path";
 import { routerIndexStub } from "./router-index";
 import { durableObjectNameForRoute, isAllowedRouteId } from "./route-id";
 import { timingSafeEqualString } from "./timing-safe-equal";
@@ -74,6 +79,27 @@ export async function handleDashboard(
       return unauthorizedDashboard();
     }
     return deleteDashboardOAuthCallbackPath(request, env);
+  }
+
+  if (pathname === "/dashboard/webhook-fanout" && request.method === "POST") {
+    if (!authed) {
+      return unauthorizedDashboard();
+    }
+    return saveDashboardWebhookFanout(request, env);
+  }
+
+  if (pathname === "/dashboard/webhook-fanout-rules" && request.method === "POST") {
+    if (!authed) {
+      return unauthorizedDashboard();
+    }
+    return addDashboardWebhookFanoutRule(request, env);
+  }
+
+  if (pathname === "/dashboard/webhook-fanout-rules/delete" && request.method === "POST") {
+    if (!authed) {
+      return unauthorizedDashboard();
+    }
+    return deleteDashboardWebhookFanoutRule(request, env);
   }
 
   if (request.method !== "GET" && request.method !== "HEAD") {
@@ -163,20 +189,79 @@ async function readOAuthCallbackPathForm(
   return { routeId, path };
 }
 
+async function saveDashboardWebhookFanout(request: Request, env: Env): Promise<Response> {
+  const form = await request.formData();
+  const routeRaw = form.get("routeId");
+  const routeId = typeof routeRaw === "string" ? routeRaw.trim() : "";
+  const denyValues = form.getAll("denyAllWebhooks").map((value) => String(value));
+  const denyAllWebhooks = denyValues.includes("on");
+  if (!isAllowedRouteId(routeId)) {
+    return Response.redirect(new URL("/dashboard", request.url).toString(), 303);
+  }
+  await routerIndexStub(env).setWebhookFanoutDenyAll(routeId, denyAllWebhooks);
+  return Response.redirect(new URL("/dashboard", request.url).toString(), 303);
+}
+
+async function addDashboardWebhookFanoutRule(request: Request, env: Env): Promise<Response> {
+  const { routeId, mode, path, environmentId } = await readWebhookFanoutRuleForm(request);
+  if (
+    !isAllowedRouteId(routeId) ||
+    !validateWebhookFanoutRuleMode(mode) ||
+    !validateWebhookFilterPath(path) ||
+    !parseWebhookFilterEnvironmentId(environmentId).ok
+  ) {
+    return Response.redirect(new URL("/dashboard", request.url).toString(), 303);
+  }
+  await routerIndexStub(env).addWebhookFanoutRule(routeId, mode, path, environmentId);
+  return Response.redirect(new URL("/dashboard", request.url).toString(), 303);
+}
+
+async function deleteDashboardWebhookFanoutRule(request: Request, env: Env): Promise<Response> {
+  const { routeId, mode, path, environmentId } = await readWebhookFanoutRuleForm(request);
+  if (!isAllowedRouteId(routeId) || !validateWebhookFanoutRuleMode(mode) || !validateWebhookFilterPath(path)) {
+    return Response.redirect(new URL("/dashboard", request.url).toString(), 303);
+  }
+  await routerIndexStub(env).removeWebhookFanoutRule(routeId, mode, path, environmentId);
+  return Response.redirect(new URL("/dashboard", request.url).toString(), 303);
+}
+
+async function readWebhookFanoutRuleForm(request: Request): Promise<{
+  routeId: string;
+  mode: string;
+  path: string;
+  environmentId: string;
+}> {
+  const form = await request.formData();
+  const routeRaw = form.get("routeId");
+  const modeRaw = form.get("mode");
+  const pathRaw = form.get("path");
+  const envRaw = form.get("environmentId");
+  return {
+    routeId: typeof routeRaw === "string" ? routeRaw.trim() : "",
+    mode: typeof modeRaw === "string" ? modeRaw.trim() : "",
+    path: typeof pathRaw === "string" ? pathRaw.trim() : "",
+    environmentId: typeof envRaw === "string" ? envRaw.trim() : ""
+  };
+}
+
 async function loadDashboardStatus(env: Env) {
   const index = routerIndexStub(env);
-  const [routes, connectionLog, inboundLog, oauthCallbackPaths] = await Promise.all([
-    loadDashboardRoutes(env),
-    index.listConnectionEvents(),
-    index.listInboundEvents(),
-    index.listAllOAuthCallbackPaths()
-  ]);
+  const [routes, connectionLog, inboundLog, oauthCallbackPaths, webhookSettings, webhookRules] =
+    await Promise.all([
+      loadDashboardRoutes(env),
+      index.listConnectionEvents(),
+      index.listInboundEvents(),
+      index.listAllOAuthCallbackPaths(),
+      index.listAllWebhookFanoutSettings(),
+      index.listAllWebhookFanoutRules()
+    ]);
   return dashboardStatus(
     Boolean(env.DEV_ROUTER_SECRET),
     routes,
     connectionLog,
     inboundLog,
-    oauthCallbackPaths
+    oauthCallbackPaths,
+    { settings: webhookSettings, rules: webhookRules }
   );
 }
 

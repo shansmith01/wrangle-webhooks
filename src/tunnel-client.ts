@@ -46,6 +46,7 @@ export class TunnelConnection implements Connection {
   connectionToken = "";
   connectionState: ConnectionStateReason = "connecting";
   readonly environmentId?: string;
+  readonly acceptWebhooks: boolean;
 
   private readonly routerUrl: string;
   private readonly secret: string;
@@ -70,6 +71,7 @@ export class TunnelConnection implements Connection {
     routeId: string;
     localUrl: string;
     environmentId?: string;
+    acceptWebhooks?: boolean;
   }) {
     this.routerUrl = options.routerUrl;
     this.secret = options.secret;
@@ -77,6 +79,7 @@ export class TunnelConnection implements Connection {
     this.targetBaseUrl = options.localUrl;
     this.publicUrl = publicIngressUrl(options.routerUrl, options.routeId);
     this.environmentId = options.environmentId;
+    this.acceptWebhooks = options.acceptWebhooks !== false;
     this.ready = new Promise<void>((resolve, reject) => {
       this.markReady = () => {
         if (this.readySettled) {
@@ -200,7 +203,7 @@ export class TunnelConnection implements Connection {
 
   private async openAndServe(): Promise<void> {
     const url = toWebSocketUrl(
-      `${this.routerUrl}${managementTunnelPath(this.routeId, this.environmentId)}`
+      `${this.routerUrl}${managementTunnelPath(this.routeId, this.environmentId, this.acceptWebhooks)}`
     );
     const headers: Record<string, string> = {};
     if (this.connectionToken) {

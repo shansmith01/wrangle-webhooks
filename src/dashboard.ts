@@ -6,6 +6,7 @@ import {
   type InboundLogEvent
 } from "./inbound-log";
 import type { OAuthCallbackPathRow } from "./oauth-callback-path";
+import type { WebhookFanoutRule } from "./webhook-path-filter";
 
 /** HTML dashboard snapshot of active routes and subscribers. */
 export interface DashboardRoute {
@@ -23,8 +24,15 @@ export interface DashboardStatus {
   subscriberCount: number;
   routes: DashboardRoute[];
   oauthCallbackPaths: OAuthCallbackPathRow[];
+  webhookFanout: DashboardWebhookFanout;
   inboundLog: InboundLogEvent[];
   connectionLog: ConnectionLogEvent[];
+}
+
+/** Dashboard snapshot of route deny-all flags and webhook path prefix rules. */
+export interface DashboardWebhookFanout {
+  settings: Array<{ routeId: string; denyAllWebhooks: boolean }>;
+  rules: WebhookFanoutRule[];
 }
 
 /** Build the dashboard status JSON from live routes, inbound requests, and connection audit. */
@@ -33,7 +41,8 @@ export function dashboardStatus(
   routes: DashboardRoute[],
   connectionLog: ConnectionLogEvent[] = [],
   inboundLog: InboundLogEvent[] = [],
-  oauthCallbackPaths: OAuthCallbackPathRow[] = []
+  oauthCallbackPaths: OAuthCallbackPathRow[] = [],
+  webhookFanout: DashboardWebhookFanout = { settings: [], rules: [] }
 ): DashboardStatus {
   const active = routes.filter((route) => route.subscribers.length > 0);
   return {
@@ -44,6 +53,7 @@ export function dashboardStatus(
     subscriberCount: active.reduce((sum, route) => sum + route.subscribers.length, 0),
     routes: active,
     oauthCallbackPaths,
+    webhookFanout,
     inboundLog,
     connectionLog
   };
@@ -160,8 +170,57 @@ const DASHBOARD_CSS = `
       cursor: pointer;
     }
     .oauth-delete { margin: 0; }
+    .webhook-form {
+      display: grid;
+      grid-template-columns: minmax(100px, 1fr) minmax(110px, auto) minmax(160px, 2fr) minmax(120px, 1fr) auto;
+      gap: 8px;
+      align-items: end;
+      margin-top: 12px;
+    }
+    .webhook-deny {
+      display: grid;
+      grid-template-columns: minmax(100px, 1fr) auto auto;
+      gap: 8px;
+      align-items: end;
+      margin-top: 12px;
+    }
+    .webhook-form label, .webhook-deny label {
+      display: block; color: var(--muted); font-size: 12px; text-transform: uppercase; letter-spacing: 0.04em; margin-bottom: 4px;
+    }
+    .webhook-form input, .webhook-form select, .webhook-deny input {
+      width: 100%;
+      font: inherit;
+      color: var(--text);
+      background: var(--bg);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 8px 10px;
+    }
+    .webhook-deny .check {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding-bottom: 8px;
+      color: var(--muted);
+      font-size: 13px;
+      text-transform: none;
+      letter-spacing: 0;
+    }
+    .webhook-deny .check input { width: auto; }
+    .webhook-form button, .webhook-deny button, .webhook-delete button {
+      font: inherit;
+      color: var(--text);
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 8px 12px;
+      cursor: pointer;
+    }
+    .webhook-delete { margin: 0; }
+    .badge-off { color: var(--warn); font-size: 12px; }
     @media (max-width: 720px) {
       .oauth-form { grid-template-columns: 1fr; }
+      .webhook-form, .webhook-deny { grid-template-columns: 1fr; }
     }
 `;
 
@@ -225,6 +284,9 @@ export function dashboardHtml(status: DashboardStatus): string {
     <h2 class="section-title">OAuth callback paths</h2>
     <p class="hint">Only these remaining paths are reverse-proxied. Unregistered <code>/oauth/callback</code> and <code>/auth/callback</code> URLs are rejected (not proxied, not webhook fan-out). Register the redirect URI before pointing the provider at the Public URL.</p>
     <div id="oauth-callbacks">${renderOAuthCallbackPaths(status.oauthCallbackPaths)}</div>
+    <h2 class="section-title">Webhook fan-out</h2>
+    <p class="hint">Default is accept everything. Deny all mutes webhook fan-out on a route (OAuth still proxies). Path rules skip or only-send remaining-path prefixes. <code>--no-webhooks</code> on a sidecar is shown as webhooks off.</p>
+    <div id="webhook-fanout">${renderWebhookFanout(status.webhookFanout)}</div>
     <h2 class="section-title">Inbound requests</h2>
     <p class="hint">Metadata only. Bodies, query strings, and headers are not stored.</p>
     <div id="inbound">${renderInboundLog(status.inboundLog)}</div>
@@ -249,6 +311,7 @@ export function dashboardHtml(status: DashboardStatus): string {
         <div class="card"><div class="label">Connections</div><div class="value">\${data.subscriberCount}</div></div>\`;
       document.getElementById("routes").innerHTML = routesHtml(data.routes);
       document.getElementById("oauth-callbacks").innerHTML = oauthCallbackHtml(data.oauthCallbackPaths || []);
+      document.getElementById("webhook-fanout").innerHTML = webhookFanoutHtml(data.webhookFanout || { settings: [], rules: [] });
       document.getElementById("inbound").innerHTML = inboundHtml(data.inboundLog || []);
       document.getElementById("history").innerHTML = historyHtml(data.connectionLog || []);
       document.getElementById("updated").textContent = fmt(data.generatedAt);
@@ -264,11 +327,12 @@ export function dashboardHtml(status: DashboardStatus): string {
             <td>\${sub.environmentId ? \`<code>\${esc(sub.environmentId)}</code>\` : "—"}</td>
             <td>\${esc(sub.transport || "public")}</td>
             <td><code>\${esc(sub.targetBaseUrl)}</code></td>
+            <td>\${sub.acceptWebhooks === false ? '<span class="badge-off">webhooks off</span>' : "on"}</td>
             <td>\${fmt(sub.lastHeartbeatAt)}</td>
             <td>\${fmt(sub.expiresAt)}</td>
           </tr>\`).join("");
         return \`<div class="card route"><h2>\${esc(route.publicPath)}</h2>
-          <div class="table-wrap"><table><thead><tr><th>Subscriber</th><th>Environment id</th><th>Transport</th><th>Target</th><th>Last heartbeat</th><th>Expires</th></tr></thead>
+          <div class="table-wrap"><table><thead><tr><th>Subscriber</th><th>Environment id</th><th>Transport</th><th>Target</th><th>Webhooks</th><th>Last heartbeat</th><th>Expires</th></tr></thead>
           <tbody>\${rows}</tbody></table></div></div>\`;
       }).join("");
     }
@@ -308,6 +372,75 @@ export function dashboardHtml(status: DashboardStatus): string {
         </form>
       </div>\`;
     }
+    function webhookFanoutHtml(fanout) {
+      const settings = fanout.settings || [];
+      const rules = fanout.rules || [];
+      const settingRows = settings.map((row) => \`
+        <tr>
+          <td><code>\${esc(row.routeId === "" ? "/* (root)" : "/" + row.routeId + "/*")}</code></td>
+          <td>\${row.denyAllWebhooks ? "Deny all" : "Accept"}</td>
+        </tr>\`).join("");
+      const ruleRows = rules.map((row) => \`
+        <tr>
+          <td><code>\${esc(row.routeId === "" ? "/* (root)" : "/" + row.routeId + "/*")}</code></td>
+          <td>\${row.mode === "allow" ? "only" : "skip"}</td>
+          <td><code>\${esc(row.remainingPath)}</code></td>
+          <td>\${row.environmentId ? \`<code>\${esc(row.environmentId)}</code>\` : "all"}</td>
+          <td>
+            <form class="webhook-delete" method="post" action="/dashboard/webhook-fanout-rules/delete">
+              <input type="hidden" name="routeId" value="\${esc(row.routeId)}" />
+              <input type="hidden" name="mode" value="\${esc(row.mode)}" />
+              <input type="hidden" name="path" value="\${esc(row.remainingPath)}" />
+              <input type="hidden" name="environmentId" value="\${esc(row.environmentId || "")}" />
+              <button type="submit">Remove</button>
+            </form>
+          </td>
+        </tr>\`).join("");
+      return \`<div class="card">
+        <div class="table-wrap"><table>
+          <thead><tr><th>Route</th><th>Webhooks</th></tr></thead>
+          <tbody>\${settingRows}</tbody>
+        </table></div>
+        <form class="webhook-deny" method="post" action="/dashboard/webhook-fanout">
+          <div>
+            <label for="webhook-deny-route">Route id</label>
+            <input id="webhook-deny-route" name="routeId" placeholder="(empty = root)" autocomplete="off" />
+          </div>
+          <label class="check">
+            <input type="hidden" name="denyAllWebhooks" value="off" />
+            <input type="checkbox" name="denyAllWebhooks" value="on" />
+            Deny all webhook fan-out
+          </label>
+          <button type="submit">Save</button>
+        </form>
+        <div class="table-wrap" style="margin-top:16px"><table>
+          <thead><tr><th>Route</th><th>Mode</th><th>Remaining path</th><th>Environment</th><th></th></tr></thead>
+          <tbody>\${ruleRows}</tbody>
+        </table></div>
+        <form class="webhook-form" method="post" action="/dashboard/webhook-fanout-rules">
+          <div>
+            <label for="webhook-rule-route">Route id</label>
+            <input id="webhook-rule-route" name="routeId" placeholder="(empty = root)" autocomplete="off" />
+          </div>
+          <div>
+            <label for="webhook-rule-mode">Mode</label>
+            <select id="webhook-rule-mode" name="mode">
+              <option value="deny">skip</option>
+              <option value="allow">only</option>
+            </select>
+          </div>
+          <div>
+            <label for="webhook-rule-path">Remaining path</label>
+            <input id="webhook-rule-path" name="path" placeholder="/webhooks/mews" required autocomplete="off" />
+          </div>
+          <div>
+            <label for="webhook-rule-env">Environment id</label>
+            <input id="webhook-rule-env" name="environmentId" placeholder="(all clients)" autocomplete="off" />
+          </div>
+          <button type="submit">Add rule</button>
+        </form>
+      </div>\`;
+    }
     function inboundHtml(events) {
       if (!events.length) {
         return '<div class="card empty">No inbound requests recorded yet.</div>';
@@ -323,10 +456,11 @@ export function dashboardHtml(status: DashboardStatus): string {
           <td class="\${resultClass(event.result)}">\${esc(event.result)}</td>
           <td>\${esc(String(event.status))}\${event.error ? \` <span class="error-code">\${esc(event.error)}</span>\` : ""}</td>
           <td>\${esc(String(event.subscriberCount))}</td>
+          <td>\${esc(String(event.deliveredSubscriberCount ?? 0))}</td>
           <td>\${esc(formatBytes(event.bodyBytes))}</td>
         </tr>\`).join("");
       return \`<div class="card history"><div class="table-wrap"><table>
-        <thead><tr><th>When</th><th>Request</th><th>Kind</th><th>Method</th><th>Route</th><th>Path</th><th>Result</th><th>Status</th><th>Subscribers</th><th>Size</th></tr></thead>
+        <thead><tr><th>When</th><th>Request</th><th>Kind</th><th>Method</th><th>Route</th><th>Path</th><th>Result</th><th>Status</th><th>Subscribers</th><th>Delivered</th><th>Size</th></tr></thead>
         <tbody>\${rows}</tbody></table></div></div>\`;
     }
     function historyHtml(events) {
@@ -399,13 +533,14 @@ function renderRoutes(routes: DashboardRoute[]): string {
             <td>${sub.environmentId ? `<code>${escapeHtml(sub.environmentId)}</code>` : "—"}</td>
             <td>${escapeHtml(sub.transport)}</td>
             <td><code>${escapeHtml(sub.targetBaseUrl)}</code></td>
+            <td>${sub.acceptWebhooks === false ? `<span class="badge-off">webhooks off</span>` : "on"}</td>
             <td>${escapeHtml(new Date(sub.lastHeartbeatAt).toISOString())}</td>
             <td>${escapeHtml(new Date(sub.expiresAt).toISOString())}</td>
           </tr>`
         )
         .join("");
       return `<div class="card route"><h2>${escapeHtml(route.publicPath)}</h2>
-        <div class="table-wrap"><table><thead><tr><th>Subscriber</th><th>Environment id</th><th>Transport</th><th>Target</th><th>Last heartbeat</th><th>Expires</th></tr></thead>
+        <div class="table-wrap"><table><thead><tr><th>Subscriber</th><th>Environment id</th><th>Transport</th><th>Target</th><th>Webhooks</th><th>Last heartbeat</th><th>Expires</th></tr></thead>
         <tbody>${rows}</tbody></table></div></div>`;
     })
     .join("");
@@ -453,6 +588,82 @@ function renderOAuthCallbackPaths(paths: OAuthCallbackPathRow[]): string {
       </div>`;
 }
 
+function renderWebhookFanout(fanout: DashboardWebhookFanout): string {
+  const settingRows = fanout.settings
+    .map((row) => {
+      const routeLabel = row.routeId === "" ? "/* (root)" : publicPathForRouteId(row.routeId);
+      return `<tr>
+            <td><code>${escapeHtml(routeLabel)}</code></td>
+            <td>${row.denyAllWebhooks ? "Deny all" : "Accept"}</td>
+          </tr>`;
+    })
+    .join("");
+  const ruleRows = fanout.rules
+    .map((row) => {
+      const routeLabel = row.routeId === "" ? "/* (root)" : publicPathForRouteId(row.routeId);
+      return `<tr>
+            <td><code>${escapeHtml(routeLabel)}</code></td>
+            <td>${row.mode === "allow" ? "only" : "skip"}</td>
+            <td><code>${escapeHtml(row.remainingPath)}</code></td>
+            <td>${row.environmentId ? `<code>${escapeHtml(row.environmentId)}</code>` : "all"}</td>
+            <td>
+              <form class="webhook-delete" method="post" action="/dashboard/webhook-fanout-rules/delete">
+                <input type="hidden" name="routeId" value="${escapeHtml(row.routeId)}" />
+                <input type="hidden" name="mode" value="${escapeHtml(row.mode)}" />
+                <input type="hidden" name="path" value="${escapeHtml(row.remainingPath)}" />
+                <input type="hidden" name="environmentId" value="${escapeHtml(row.environmentId ?? "")}" />
+                <button type="submit">Remove</button>
+              </form>
+            </td>
+          </tr>`;
+    })
+    .join("");
+  return `<div class="card">
+        <div class="table-wrap"><table>
+          <thead><tr><th>Route</th><th>Webhooks</th></tr></thead>
+          <tbody>${settingRows}</tbody>
+        </table></div>
+        <form class="webhook-deny" method="post" action="/dashboard/webhook-fanout">
+          <div>
+            <label for="webhook-deny-route">Route id</label>
+            <input id="webhook-deny-route" name="routeId" placeholder="(empty = root)" autocomplete="off" />
+          </div>
+          <label class="check">
+            <input type="hidden" name="denyAllWebhooks" value="off" />
+            <input type="checkbox" name="denyAllWebhooks" value="on" />
+            Deny all webhook fan-out
+          </label>
+          <button type="submit">Save</button>
+        </form>
+        <div class="table-wrap" style="margin-top:16px"><table>
+          <thead><tr><th>Route</th><th>Mode</th><th>Remaining path</th><th>Environment</th><th></th></tr></thead>
+          <tbody>${ruleRows}</tbody>
+        </table></div>
+        <form class="webhook-form" method="post" action="/dashboard/webhook-fanout-rules">
+          <div>
+            <label for="webhook-rule-route">Route id</label>
+            <input id="webhook-rule-route" name="routeId" placeholder="(empty = root)" autocomplete="off" />
+          </div>
+          <div>
+            <label for="webhook-rule-mode">Mode</label>
+            <select id="webhook-rule-mode" name="mode">
+              <option value="deny">skip</option>
+              <option value="allow">only</option>
+            </select>
+          </div>
+          <div>
+            <label for="webhook-rule-path">Remaining path</label>
+            <input id="webhook-rule-path" name="path" placeholder="/webhooks/mews" required autocomplete="off" />
+          </div>
+          <div>
+            <label for="webhook-rule-env">Environment id</label>
+            <input id="webhook-rule-env" name="environmentId" placeholder="(all clients)" autocomplete="off" />
+          </div>
+          <button type="submit">Add rule</button>
+        </form>
+      </div>`;
+}
+
 function renderInboundLog(events: InboundLogEvent[]): string {
   if (events.length === 0) {
     return '<div class="card empty">No inbound requests recorded yet.</div>';
@@ -484,12 +695,13 @@ function renderInboundLog(events: InboundLogEvent[]): string {
             <td class="${resultClass}">${escapeHtml(event.result)}</td>
             <td>${escapeHtml(String(event.status))}${error}</td>
             <td>${escapeHtml(String(event.subscriberCount))}</td>
+            <td>${escapeHtml(String(event.deliveredSubscriberCount))}</td>
             <td>${escapeHtml(formatInboundBodyBytes(event.bodyBytes))}</td>
           </tr>`;
     })
     .join("");
   return `<div class="card history"><div class="table-wrap"><table>
-        <thead><tr><th>When</th><th>Request</th><th>Kind</th><th>Method</th><th>Route</th><th>Path</th><th>Result</th><th>Status</th><th>Subscribers</th><th>Size</th></tr></thead>
+        <thead><tr><th>When</th><th>Request</th><th>Kind</th><th>Method</th><th>Route</th><th>Path</th><th>Result</th><th>Status</th><th>Subscribers</th><th>Delivered</th><th>Size</th></tr></thead>
         <tbody>${rows}</tbody></table></div></div>`;
 }
 

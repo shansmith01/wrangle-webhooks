@@ -22,6 +22,7 @@ interface InboundEventRow {
   status: number;
   error: string | null;
   subscriber_count: number;
+  delivered_subscriber_count: number;
   body_bytes: number;
   [key: string]: SqlStorageValue;
 }
@@ -59,6 +60,14 @@ export function migrateInboundLog(sql: SqlStorage): void {
     CREATE INDEX IF NOT EXISTS idx_inbound_events_occurred_at
       ON inbound_events (occurred_at DESC);
   `);
+  const columns = sql
+    .exec<{ name: string }>("PRAGMA table_info(inbound_events)")
+    .toArray();
+  if (!columns.some((column) => column.name === "delivered_subscriber_count")) {
+    sql.exec(
+      "ALTER TABLE inbound_events ADD COLUMN delivered_subscriber_count INTEGER NOT NULL DEFAULT 0"
+    );
+  }
 }
 
 /** Append inbound request metadata and drop entries older than retention or over the cap. */
@@ -72,8 +81,8 @@ export function insertInboundLogEvents(
     sql.exec(
       `INSERT OR REPLACE INTO inbound_events (
          id, occurred_at, method, route_id, path, has_query, kind, result,
-         status, error, subscriber_count, body_bytes
-       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+         status, error, subscriber_count, delivered_subscriber_count, body_bytes
+       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       event.id,
       event.occurredAt,
       event.method,
@@ -85,6 +94,7 @@ export function insertInboundLogEvents(
       event.status,
       event.error,
       event.subscriberCount,
+      event.deliveredSubscriberCount,
       event.bodyBytes
     );
   }
@@ -101,7 +111,7 @@ export function listInboundLogEvents(
   const rows = sql
     .exec<InboundEventRow>(
       `SELECT id, occurred_at, method, route_id, path, has_query, kind, result,
-              status, error, subscriber_count, body_bytes
+              status, error, subscriber_count, delivered_subscriber_count, body_bytes
        FROM inbound_events
        WHERE occurred_at >= ?
        ORDER BY occurred_at DESC, id DESC
@@ -151,6 +161,7 @@ function toInboundLogEvent(row: InboundEventRow): InboundLogEvent | null {
     status: row.status,
     error,
     subscriberCount: row.subscriber_count,
+    deliveredSubscriberCount: row.delivered_subscriber_count ?? 0,
     bodyBytes: row.body_bytes
   };
 }

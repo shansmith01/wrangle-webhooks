@@ -12,6 +12,7 @@ import { validateOAuthCallbackPath } from "./oauth-callback-path";
 import { routerIndexStub } from "./router-index";
 import { durableObjectNameForRoute, isAllowedEnvironmentId, isAllowedRouteId } from "./route-id";
 import { TargetBaseUrlError, validateTargetBaseUrl } from "./target-base-url";
+import { parseAcceptWebhooksValue } from "./accept-webhooks";
 import { routeIdFromTunnelPath } from "./tunnel-protocol";
 
 const REGISTER = /^\/_router\/routes\/([^/]+)\/subscribers$/;
@@ -21,12 +22,16 @@ const DEREGISTER = /^\/_router\/routes\/([^/]+)\/subscribers\/([^/]+)$/;
 const OAUTH_BIND = /^\/_router\/routes\/([^/]+)\/subscribers\/([^/]+)\/oauth-states$/;
 const CREDENTIAL = /^\/_router\/routes\/([^/]+)\/credential$/;
 const NAMED_OAUTH_CALLBACK_PATHS = /^\/_router\/routes\/([^/]+)\/oauth-callback-paths$/;
+const NAMED_WEBHOOK_FANOUT = /^\/_router\/routes\/([^/]+)\/webhook-fanout$/;
+const NAMED_WEBHOOK_FANOUT_RULES = /^\/_router\/routes\/([^/]+)\/webhook-fanout-rules$/;
 const DEFAULT_REGISTER = /^\/_router\/subscribers$/;
 const DEFAULT_HEARTBEAT = /^\/_router\/subscribers\/([^/]+)\/heartbeat$/;
 const DEFAULT_DEREGISTER = /^\/_router\/subscribers\/([^/]+)$/;
 const DEFAULT_OAUTH_BIND = /^\/_router\/subscribers\/([^/]+)\/oauth-states$/;
 const DEFAULT_CREDENTIAL = /^\/_router\/credential$/;
 const DEFAULT_OAUTH_CALLBACK_PATHS = /^\/_router\/oauth-callback-paths$/;
+const DEFAULT_WEBHOOK_FANOUT = /^\/_router\/webhook-fanout$/;
+const DEFAULT_WEBHOOK_FANOUT_RULES = /^\/_router\/webhook-fanout-rules$/;
 const DEFAULT_TUNNEL = /^\/_router\/tunnel$/;
 const NAMED_TUNNEL = /^\/_router\/routes\/([^/]+)\/tunnel$/;
 
@@ -65,6 +70,29 @@ export async function handleManagement(
       request,
       env,
       decodeURIComponent(namedOAuthCallbackPaths[1])
+    );
+  }
+
+  if (DEFAULT_WEBHOOK_FANOUT.test(url.pathname)) {
+    return handleWebhookFanoutSettings(request, env, "");
+  }
+  const namedWebhookFanout = url.pathname.match(NAMED_WEBHOOK_FANOUT);
+  if (namedWebhookFanout) {
+    return handleWebhookFanoutSettings(
+      request,
+      env,
+      decodeURIComponent(namedWebhookFanout[1])
+    );
+  }
+  if (DEFAULT_WEBHOOK_FANOUT_RULES.test(url.pathname)) {
+    return handleWebhookFanoutRules(request, env, "");
+  }
+  const namedWebhookFanoutRules = url.pathname.match(NAMED_WEBHOOK_FANOUT_RULES);
+  if (namedWebhookFanoutRules) {
+    return handleWebhookFanoutRules(
+      request,
+      env,
+      decodeURIComponent(namedWebhookFanoutRules[1])
     );
   }
 
@@ -319,13 +347,20 @@ async function registerSubscriber(
       ? payload.connectionToken
       : null;
 
+  const acceptWebhooks = parseAcceptWebhooksValue(
+    payload && typeof payload === "object" && "acceptWebhooks" in payload
+      ? payload.acceptWebhooks
+      : undefined
+  );
+
   const stub = env.ROUTE.getByName(durableObjectNameForRoute(routeId));
   const result = await stub.register(
     targetBaseUrl,
     routeId,
     environmentId ?? null,
     proofToken,
-    clientIpFromRequest(request)
+    clientIpFromRequest(request),
+    acceptWebhooks
   );
   if ("error" in result) {
     return Response.json({ error: result.error }, { status: 409 });
@@ -486,3 +521,164 @@ async function readOAuthCallbackPathBody(request: Request): Promise<string | nul
   }
   return null;
 }
+
+/**
+ * Operator-only GET/PUT for the route deny-all webhook fan-out checkbox.
+ * Minted route join tokens cannot mute webhooks for every subscriber.
+ */
+async function handleWebhookFanoutSettings(
+  request: Request,
+  env: Env,
+  routeId: string
+): Promise<Response> {
+  if (!requireManagementAuth(request, env.DEV_ROUTER_SECRET)) {
+    return unauthorizedManagementResponse();
+  }
+  if (!isAllowedRouteId(routeId)) {
+    return Response.json({ error: "invalid_route_id" }, { status: 400 });
+  }
+  const index = routerIndexStub(env);
+
+  if (request.method === "GET") {
+    const settings = await index.getWebhookFanoutSettings(routeId);
+    return Response.json(settings);
+  }
+
+  if (request.method === "PUT") {
+    const denyAll = await readDenyAllWebhooksBody(request);
+    if (denyAll === null) {
+      return Response.json({ error: "invalid_json" }, { status: 400 });
+    }
+    const settings = await index.setWebhookFanoutDenyAll(routeId, denyAll);
+    if (!settings) {
+      return Response.json({ error: "invalid_route_id" }, { status: 400 });
+    }
+    return Response.json(settings);
+  }
+
+  return Response.json({ error: "method_not_allowed" }, { status: 405 });
+}
+
+/**
+ * Operator-only CRUD for webhook remaining-path prefix rules.
+ * Minted route join tokens cannot expand or shrink fan-out.
+ */
+async function handleWebhookFanoutRules(
+  request: Request,
+  env: Env,
+  routeId: string
+): Promise<Response> {
+  if (!requireManagementAuth(request, env.DEV_ROUTER_SECRET)) {
+    return unauthorizedManagementResponse();
+  }
+  if (!isAllowedRouteId(routeId)) {
+    return Response.json({ error: "invalid_route_id" }, { status: 400 });
+  }
+  const index = routerIndexStub(env);
+
+  if (request.method === "GET") {
+    const settings = await index.getWebhookFanoutSettings(routeId);
+    return Response.json({ routeId, rules: settings.rules });
+  }
+
+  if (request.method === "PUT") {
+    const body = await readWebhookFanoutRuleBody(request);
+    if (!body) {
+      return Response.json({ error: "invalid_json" }, { status: 400 });
+    }
+    const result = await index.addWebhookFanoutRule(
+      routeId,
+      body.mode,
+      body.path,
+      body.environmentId
+    );
+    if (!result.ok) {
+      return Response.json({ error: result.error }, { status: 400 });
+    }
+    return Response.json(result.rule);
+  }
+
+  if (request.method === "DELETE") {
+    const body =
+      (await readWebhookFanoutRuleBody(request)) ??
+      readWebhookFanoutRuleQuery(new URL(request.url));
+    if (!body) {
+      return Response.json({ error: "invalid_json" }, { status: 400 });
+    }
+    const removed = await index.removeWebhookFanoutRule(
+      routeId,
+      body.mode,
+      body.path,
+      body.environmentId
+    );
+    if (!removed) {
+      return Response.json({ error: "webhook_fanout_rule_not_found" }, { status: 404 });
+    }
+    return new Response(null, { status: 204 });
+  }
+
+  return Response.json({ error: "method_not_allowed" }, { status: 405 });
+}
+
+async function readDenyAllWebhooksBody(request: Request): Promise<boolean | null> {
+  let payload: unknown;
+  try {
+    payload = await request.json();
+  } catch {
+    return null;
+  }
+  if (
+    payload &&
+    typeof payload === "object" &&
+    "denyAllWebhooks" in payload &&
+    typeof payload.denyAllWebhooks === "boolean"
+  ) {
+    return payload.denyAllWebhooks;
+  }
+  return null;
+}
+
+async function readWebhookFanoutRuleBody(
+  request: Request
+): Promise<{ mode: string; path: string; environmentId: string | null } | null> {
+  if (request.method === "DELETE" && !request.headers.get("content-type")) {
+    return null;
+  }
+  let payload: unknown;
+  try {
+    payload = await request.json();
+  } catch {
+    return null;
+  }
+  if (
+    !payload ||
+    typeof payload !== "object" ||
+    !("mode" in payload) ||
+    typeof payload.mode !== "string" ||
+    !("path" in payload) ||
+    typeof payload.path !== "string"
+  ) {
+    return null;
+  }
+  const environmentId =
+    "environmentId" in payload && typeof payload.environmentId === "string"
+      ? payload.environmentId
+      : null;
+  return { mode: payload.mode, path: payload.path, environmentId };
+}
+
+function readWebhookFanoutRuleQuery(
+  url: URL
+): { mode: string; path: string; environmentId: string | null } | null {
+  const mode = url.searchParams.get("mode");
+  const path = url.searchParams.get("path");
+  if (!mode || !path) {
+    return null;
+  }
+  return {
+    mode,
+    path,
+    environmentId: url.searchParams.get("environmentId")
+  };
+}
+

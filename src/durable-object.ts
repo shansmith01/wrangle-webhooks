@@ -22,6 +22,7 @@ import {
 } from "./connection-log";
 import { routerIndexStub } from "./router-index";
 import { isAllowedEnvironmentId } from "./route-id";
+import { parseAcceptWebhooksValue } from "./accept-webhooks";
 import { DELIVERY_TIMEOUT_MS, SUBSCRIBER_TTL_MS } from "./subscriber-lifetime";
 import { validateTargetBaseUrl } from "./target-base-url";
 import {
@@ -43,6 +44,7 @@ import {
   type TunnelRequestMessage,
   type TunnelResponseMessage
 } from "./tunnel-protocol";
+import { selectWebhookFanoutSubscribers } from "./webhook-path-filter";
 import type { IngressPayload, ProxyResult, Subscriber } from "./dev-router-types";
 
 interface SubscriberRow {
@@ -52,6 +54,7 @@ interface SubscriberRow {
   forward_token: string;
   connection_token_hash: string;
   environment_id: string | null;
+  accept_webhooks: number;
   created_at: number;
   last_heartbeat_at: number;
   expires_at: number;
@@ -63,6 +66,8 @@ interface DeliverySubscriber {
   transport: "public" | "tunnel";
   targetBaseUrl: string;
   forwardToken: string;
+  environmentId: string | null;
+  acceptWebhooks: boolean;
 }
 
 interface PendingTunnel {
@@ -146,6 +151,13 @@ export class RouteDurableObject extends DurableObject<Env> {
         INSERT INTO _sql_schema_migrations (id) VALUES (3);
       `);
     }
+
+    if (currentVersion < 4) {
+      this.ctx.storage.sql.exec(`
+        ALTER TABLE subscribers ADD COLUMN accept_webhooks INTEGER NOT NULL DEFAULT 1;
+        INSERT INTO _sql_schema_migrations (id) VALUES (4);
+      `);
+    }
   }
 
   async fetch(request: Request): Promise<Response> {
@@ -164,6 +176,7 @@ export class RouteDurableObject extends DurableObject<Env> {
     if (environmentParam && !environmentId) {
       return Response.json({ error: "invalid_environment_id" }, { status: 400 });
     }
+    const acceptWebhooks = parseAcceptWebhooksValue(url.searchParams.get("acceptWebhooks"));
 
     const now = Date.now();
     this.purgeExpired(now);
@@ -174,7 +187,8 @@ export class RouteDurableObject extends DurableObject<Env> {
       transport: "tunnel",
       targetBaseUrl: "",
       connectionToken: request.headers.get(ROUTER_HEADER_CONNECTION),
-      clientIp: clientIpFromRequest(request)
+      clientIp: clientIpFromRequest(request),
+      acceptWebhooks
     });
     if (!attached.ok) {
       await this.flushConnectionLog();
@@ -253,7 +267,8 @@ export class RouteDurableObject extends DurableObject<Env> {
     routeId: string,
     environmentId?: string | null,
     connectionToken?: string | null,
-    clientIp?: string | null
+    clientIp?: string | null,
+    acceptWebhooks = true
   ): Promise<
     | {
         subscriberId: string;
@@ -273,7 +288,8 @@ export class RouteDurableObject extends DurableObject<Env> {
       transport: "public",
       targetBaseUrl: normalized,
       connectionToken: connectionToken ?? null,
-      clientIp
+      clientIp,
+      acceptWebhooks
     });
     if (!attached.ok) {
       await this.flushConnectionLog();
@@ -375,7 +391,7 @@ export class RouteDurableObject extends DurableObject<Env> {
     this.purgeExpired(now);
     const rows = this.ctx.storage.sql
       .exec<SubscriberRow>(
-        `SELECT id, target_base_url, created_at, last_heartbeat_at, expires_at, transport, forward_token, connection_token_hash, environment_id
+        `SELECT id, target_base_url, created_at, last_heartbeat_at, expires_at, transport, forward_token, connection_token_hash, environment_id, accept_webhooks
          FROM subscribers
          ORDER BY created_at ASC`
       )
@@ -388,12 +404,17 @@ export class RouteDurableObject extends DurableObject<Env> {
   }
 
   async fanOut(payload: IngressPayload): Promise<void> {
-    const subscribers = this.deliverySubscribers();
+    const subscribers = await this.webhookFanoutTargets(payload.remainingPath);
     const body = bodyFromPayload(payload);
     await Promise.allSettled(
       subscribers.map((subscriber) => this.deliver(subscriber, payload, body, false))
     );
     await this.flushConnectionLog();
+  }
+
+  /** How many live subscribers pass webhook path filters for this remaining path. */
+  async countWebhookFanoutDeliveries(remainingPath: string): Promise<number> {
+    return (await this.webhookFanoutTargets(remainingPath)).length;
   }
 
   async proxyOAuth(payload: IngressPayload): Promise<ProxyResult> {
@@ -474,7 +495,8 @@ export class RouteDurableObject extends DurableObject<Env> {
         createdAt: 0,
         lastHeartbeatAt: 0,
         expiresAt: 0,
-        environmentId: null
+        environmentId: null,
+        acceptWebhooks: true
       },
       remainingPath: payload.remainingPath,
       search: payload.search,
@@ -581,7 +603,7 @@ export class RouteDurableObject extends DurableObject<Env> {
     this.purgeExpired(now);
     const rows = this.ctx.storage.sql
       .exec<SubscriberRow>(
-        `SELECT id, target_base_url, created_at, last_heartbeat_at, expires_at, transport, forward_token, connection_token_hash, environment_id
+        `SELECT id, target_base_url, created_at, last_heartbeat_at, expires_at, transport, forward_token, connection_token_hash, environment_id, accept_webhooks
          FROM subscribers
          ORDER BY created_at ASC`
       )
@@ -592,8 +614,21 @@ export class RouteDurableObject extends DurableObject<Env> {
         id: row.id,
         transport: row.transport === "tunnel" ? "tunnel" : "public",
         targetBaseUrl: row.target_base_url,
-        forwardToken: this.ensureForwardToken(row)
+        forwardToken: this.ensureForwardToken(row),
+        environmentId: row.environment_id,
+        acceptWebhooks: row.accept_webhooks !== 0
       }));
+  }
+
+  private async webhookFanoutTargets(remainingPath: string): Promise<DeliverySubscriber[]> {
+    const settings = await routerIndexStub(this.env).getWebhookFanoutSettings(
+      this.getRouteId() ?? ""
+    );
+    return selectWebhookFanoutSubscribers(
+      this.deliverySubscribers(),
+      remainingPath,
+      settings
+    );
   }
 
   private async reclaimOrCreate(options: {
@@ -602,6 +637,7 @@ export class RouteDurableObject extends DurableObject<Env> {
     targetBaseUrl: string;
     connectionToken?: string | null;
     clientIp?: string | null;
+    acceptWebhooks: boolean;
   }): Promise<
     | {
         ok: true;
@@ -649,7 +685,8 @@ export class RouteDurableObject extends DurableObject<Env> {
       this.ctx.storage.sql.exec(
         `UPDATE subscribers
          SET transport = ?, target_base_url = ?, connection_token_hash = ?,
-             last_heartbeat_at = ?, expires_at = ?, environment_id = ?
+             last_heartbeat_at = ?, expires_at = ?, environment_id = ?,
+             accept_webhooks = ?
          WHERE id = ?`,
         options.transport,
         options.targetBaseUrl,
@@ -657,6 +694,7 @@ export class RouteDurableObject extends DurableObject<Env> {
         now,
         now + SUBSCRIBER_TTL_MS,
         options.environmentId,
+        options.acceptWebhooks ? 1 : 0,
         existing.id
       );
       this.queueConnectionLog({
@@ -680,8 +718,8 @@ export class RouteDurableObject extends DurableObject<Env> {
     const forwardToken = `ft_${randomHex(18)}`;
     this.ctx.storage.sql.exec(
       `INSERT INTO subscribers
-        (id, target_base_url, created_at, last_heartbeat_at, expires_at, transport, forward_token, connection_token_hash, environment_id)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        (id, target_base_url, created_at, last_heartbeat_at, expires_at, transport, forward_token, connection_token_hash, environment_id, accept_webhooks)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       subscriberId,
       options.targetBaseUrl,
       now,
@@ -690,7 +728,8 @@ export class RouteDurableObject extends DurableObject<Env> {
       options.transport,
       forwardToken,
       connectionTokenHash,
-      options.environmentId
+      options.environmentId,
+      options.acceptWebhooks ? 1 : 0
     );
     this.queueConnectionLog({
       action: "connected",
@@ -714,7 +753,7 @@ export class RouteDurableObject extends DurableObject<Env> {
   private lookupSubscriberByEnvironment(environmentId: string): SubscriberRow | undefined {
     return this.ctx.storage.sql
       .exec<SubscriberRow>(
-        `SELECT id, target_base_url, created_at, last_heartbeat_at, expires_at, transport, forward_token, connection_token_hash, environment_id
+        `SELECT id, target_base_url, created_at, last_heartbeat_at, expires_at, transport, forward_token, connection_token_hash, environment_id, accept_webhooks
          FROM subscribers WHERE environment_id = ?`,
         environmentId
       )
@@ -724,7 +763,7 @@ export class RouteDurableObject extends DurableObject<Env> {
   private lookupSubscriber(subscriberId: string): SubscriberRow | undefined {
     return this.ctx.storage.sql
       .exec<SubscriberRow>(
-        `SELECT id, target_base_url, created_at, last_heartbeat_at, expires_at, transport, forward_token, connection_token_hash, environment_id
+        `SELECT id, target_base_url, created_at, last_heartbeat_at, expires_at, transport, forward_token, connection_token_hash, environment_id, accept_webhooks
          FROM subscribers WHERE id = ?`,
         subscriberId
       )
@@ -880,7 +919,7 @@ export class RouteDurableObject extends DurableObject<Env> {
   private expireStaleTunnels(now: number): void {
     const rows = this.ctx.storage.sql
       .exec<SubscriberRow>(
-        `SELECT id, target_base_url, created_at, last_heartbeat_at, expires_at, transport, forward_token, connection_token_hash, environment_id
+        `SELECT id, target_base_url, created_at, last_heartbeat_at, expires_at, transport, forward_token, connection_token_hash, environment_id, accept_webhooks
          FROM subscribers WHERE transport = 'tunnel'`
       )
       .toArray();
@@ -1015,7 +1054,8 @@ function toSubscriber(row: SubscriberRow): Subscriber {
     createdAt: row.created_at,
     lastHeartbeatAt: row.last_heartbeat_at,
     expiresAt: row.expires_at,
-    environmentId: row.environment_id
+    environmentId: row.environment_id,
+    acceptWebhooks: row.accept_webhooks !== 0
   };
 }
 

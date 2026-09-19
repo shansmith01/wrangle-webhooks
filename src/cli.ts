@@ -5,6 +5,7 @@ import { CONTROL_DEFAULT_PORT } from "./control-server";
 import { detectPublicDevUrl, resolveDevPort } from "./detect-url";
 import { forwardingDisplayUrl } from "./ingress-urls";
 import { isAllowedEnvironmentId, isAllowedRouteId } from "./route-id";
+import { resolveAcceptWebhooks } from "./accept-webhooks";
 import { waitForShutdownSignal } from "./wait-for-shutdown";
 
 async function main(): Promise<void> {
@@ -18,6 +19,7 @@ async function main(): Promise<void> {
       url: { type: "string" },
       secret: { type: "string" },
       "environment-id": { type: "string" },
+      "no-webhooks": { type: "boolean" },
       "control-port": { type: "string" },
       "control-socket": { type: "string" },
       "control-token": { type: "string" },
@@ -57,6 +59,10 @@ async function main(): Promise<void> {
   const explicitTarget = values.target ?? process.env.PUBLIC_DEV_URL;
   const environmentId =
     values["environment-id"] ?? process.env.DEV_ROUTER_ENVIRONMENT_ID;
+  const acceptWebhooks = resolveAcceptWebhooks({
+    flag: values["no-webhooks"] === true,
+    envValue: process.env.DEV_ROUTER_NO_WEBHOOKS
+  });
 
   if (localUrl && explicitTarget) {
     console.error("--local-url and --target are mutually exclusive.");
@@ -96,7 +102,8 @@ async function main(): Promise<void> {
     localUrl,
     targetBaseUrl: localUrl ? undefined : targetBaseUrl,
     port: port ?? resolveDevPort(process.env),
-    environmentId
+    environmentId,
+    acceptWebhooks
   });
 
   const control =
@@ -128,6 +135,10 @@ async function main(): Promise<void> {
     console.log("");
     console.log("Environment:");
     console.log(connection.environmentId);
+  }
+  if (!connection.acceptWebhooks) {
+    console.log("");
+    console.log("Webhooks: denied (this subscriber)");
   }
   if (control) {
     console.log("");
@@ -162,6 +173,9 @@ async function main(): Promise<void> {
   if (control) {
     console.log("Bind OAuth state from the app process: POST /oauth-states on the Control URL.");
   }
+  if (!connection.acceptWebhooks) {
+    console.log("Webhooks: denied (this subscriber)");
+  }
 
   await waitForShutdownSignal();
   await control?.close();
@@ -187,6 +201,7 @@ function printUsage(): void {
   npx dev-router connect --route nomads --local-url http://127.0.0.1:3000
   npx dev-router connect --route my-web-app --port 3000
   npx dev-router connect --target https://abc123.cloud-dev.example
+  npx dev-router connect --local-url http://127.0.0.1:3000 --no-webhooks
   npx dev-router token
   npx dev-router token --route nomads
 
@@ -201,6 +216,8 @@ environment already has a public https:// origin the Worker can fetch.
 
 --route is optional. Omitting it publishes at the router root
 (https://dev-webhooks.example.com/*) with no project prefix.
+--no-webhooks (or DEV_ROUTER_NO_WEBHOOKS=1) keeps this subscriber on the route
+for OAuth but skips webhook fan-out.
 
 Mint credentials from the operator secret. Match the connect command:
   npx dev-router token                 root-scoped (omit --route on connect)
@@ -213,6 +230,7 @@ Environment:
   DEV_ROUTER_PORT             Local app port used when constructing a detected URL (default 3000)
   DEV_ROUTER_LOCAL_URL        Local HTTP origin for reverse-tunnel mode
   DEV_ROUTER_ENVIRONMENT_ID   Stable identity across reconnects
+  DEV_ROUTER_NO_WEBHOOKS      1/true/yes: this subscriber skips webhook fan-out
   DEV_ROUTER_CONTROL_PORT     Loopback control port (default 8790; listens immediately)
   DEV_ROUTER_CONTROL_SOCKET   Unix socket path instead of a TCP port
   DEV_ROUTER_CONTROL_TOKEN    Optional bearer token for the control server

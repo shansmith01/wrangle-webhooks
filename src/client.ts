@@ -72,7 +72,8 @@ export class DevRouterClient {
         secret: this.secret,
         routeId,
         localUrl: validateLocalUrl(options.localUrl),
-        environmentId: resolveEnvironmentId(options)
+        environmentId: resolveEnvironmentId(options),
+        acceptWebhooks: options.acceptWebhooks
       });
     }
 
@@ -97,6 +98,7 @@ class PublicConnection implements Connection {
   connectionToken = "";
   connectionState: ConnectionStateReason = "connecting";
   readonly environmentId?: string;
+  readonly acceptWebhooks: boolean;
 
   get connected(): boolean {
     return !this.disconnected && this.subscriberId.length > 0;
@@ -124,6 +126,7 @@ class PublicConnection implements Connection {
     this.targetBaseUrl = options.targetBaseUrl;
     this.publicUrl = publicIngressUrl(client.routerUrl, options.routeId);
     this.environmentId = resolveEnvironmentId(options);
+    this.acceptWebhooks = options.acceptWebhooks !== false;
     this.ready = new Promise<void>((resolve, reject) => {
       this.markReady = () => {
         if (this.readySettled) {
@@ -237,7 +240,8 @@ class PublicConnection implements Connection {
       body: JSON.stringify({
         targetBaseUrl: this.targetBaseUrl,
         ...(this.environmentId ? { environmentId: this.environmentId } : {}),
-        ...(this.connectionToken ? { connectionToken: this.connectionToken } : {})
+        ...(this.connectionToken ? { connectionToken: this.connectionToken } : {}),
+        ...(this.acceptWebhooks ? {} : { acceptWebhooks: false })
       })
       });
     } catch (error) {

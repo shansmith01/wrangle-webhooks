@@ -101,9 +101,9 @@ function oauthCallbackResultParams(
 ): { state: string | null; code: string | null; error: string | null } {
   const query = new URLSearchParams(search.startsWith("?") ? search.slice(1) : search);
   return {
-    state: query.get("state") ?? form?.get("state"),
-    code: query.get("code") ?? form?.get("code"),
-    error: query.get("error") ?? form?.get("error")
+    state: query.get("state") ?? form?.get("state") ?? null,
+    code: query.get("code") ?? form?.get("code") ?? null,
+    error: query.get("error") ?? form?.get("error") ?? null
   };
 }
 

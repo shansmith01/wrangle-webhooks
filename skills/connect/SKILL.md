@@ -5,7 +5,8 @@ description: >
   Portless session to @powerboard/dev-router via `npx dev-router connect`,
   DevRouterClient, DEV_ROUTER_URL, DEV_ROUTER_SECRET, DEV_ROUTER_ROUTE, --route,
   --local-url, DEV_ROUTER_LOCAL_URL, --target, PUBLIC_DEV_URL, --environment-id,
-  DEV_ROUTER_ENVIRONMENT_ID, control server /ready /oauth-states, Amp orbs,
+  DEV_ROUTER_ENVIRONMENT_ID, --no-webhooks, DEV_ROUTER_NO_WEBHOOKS, control server
+  /ready /oauth-states, Amp orbs,
   Cursor Cloud Agents, Codespaces, Gitpod, Replit, CI workers, containers, or
   local development with Portless. Covers reverse-tunnel sidecar install,
   supervisor .env loading, stable environment ids, optional public HTTPS
@@ -21,6 +22,7 @@ sources:
   - shansmith01/wrangle-webhooks:skills/connect/connect.md
   - shansmith01/wrangle-webhooks:src/cli.ts
   - shansmith01/wrangle-webhooks:src/client.ts
+  - shansmith01/wrangle-webhooks:src/accept-webhooks.ts
   - shansmith01/wrangle-webhooks:src/tunnel-client.ts
   - shansmith01/wrangle-webhooks:src/control-server.ts
   - shansmith01/wrangle-webhooks:src/connection-state.ts

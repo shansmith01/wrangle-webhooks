@@ -40,6 +40,7 @@ export interface InboundLogEvent {
   status: number;
   error: InboundLogError | null;
   subscriberCount: number;
+  deliveredSubscriberCount: number;
   bodyBytes: number;
 }
 
@@ -55,6 +56,7 @@ export interface InboundLogEventInput {
   status: number;
   error?: string | null;
   subscriberCount: number;
+  deliveredSubscriberCount?: number;
   bodyBytes: number;
   occurredAt?: number;
 }
@@ -86,6 +88,7 @@ export function buildInboundLogEvent(input: InboundLogEventInput): InboundLogEve
     status: sanitizeInboundStatus(input.status),
     error: sanitizeInboundError(input.error),
     subscriberCount: sanitizeInboundCount(input.subscriberCount),
+    deliveredSubscriberCount: sanitizeInboundCount(input.deliveredSubscriberCount ?? 0),
     bodyBytes: sanitizeInboundBodyBytes(input.bodyBytes)
   };
 }

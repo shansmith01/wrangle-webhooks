@@ -69,12 +69,17 @@ test("registers a subscriber and deregisters on disconnect", async () => {
   expect(connection.publicUrl).toBe("https://dev-webhooks.example.com/my-web-app/*");
   expect(connection.environmentId).toBe("codespace-1");
   expect(connection.connected).toBe(true);
-  expect(requests[0]).toEqual({
+  expect(connection.acceptWebhooks).toBe(true);
+  expect(requests[0]).toMatchObject({
     url: "https://dev-webhooks.example.com/_router/routes/my-web-app/subscribers",
     method: "POST",
-    authorization: "Bearer test-secret",
-    body: expect.stringContaining("codespace-1")
+    authorization: "Bearer test-secret"
   });
+  expect(JSON.parse(requests[0]?.body ?? "{}")).toMatchObject({
+    targetBaseUrl: "https://abc123.cloud-dev.example",
+    environmentId: "codespace-1"
+  });
+  expect(JSON.parse(requests[0]?.body ?? "{}").acceptWebhooks).toBeUndefined();
 
   await connection.disconnect();
   expect(connection.connected).toBe(false);
@@ -82,6 +87,36 @@ test("registers a subscriber and deregisters on disconnect", async () => {
     url: expect.stringContaining("subscribers/sub_abc123"),
     method: "DELETE"
   });
+});
+
+test("AC-20 register JSON includes acceptWebhooks false when this subscriber denies webhooks", async () => {
+  const requests = stubManagementFetch((request) => {
+    if (request.method === "POST") {
+      return Response.json({
+        subscriberId: "sub_mute",
+        routeId: "my-web-app",
+        expiresIn: 300,
+        forwardToken: "ft_testtoken"
+      });
+    }
+    return new Response(null, { status: 204 });
+  });
+
+  const client = new DevRouterClient({
+    routerUrl: "https://dev-webhooks.example.com",
+    secret: "test-secret"
+  });
+  const connection = await client.connect({
+    routeId: "my-web-app",
+    targetBaseUrl: "https://abc123.cloud-dev.example",
+    acceptWebhooks: false
+  });
+  expect(connection.acceptWebhooks).toBe(false);
+  expect(JSON.parse(requests[0]?.body ?? "{}")).toMatchObject({
+    targetBaseUrl: "https://abc123.cloud-dev.example",
+    acceptWebhooks: false
+  });
+  await connection.disconnect();
 });
 
 test("detects the environment public URL when targetBaseUrl is omitted", async () => {

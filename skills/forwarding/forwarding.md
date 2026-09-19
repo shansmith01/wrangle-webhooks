@@ -27,7 +27,9 @@ The original method, raw body, query string, and relevant headers are preserved.
 
 ## Webhooks vs OAuth
 
-Webhooks use **fan-out**. Every active subscriber receives a copy. The public caller gets `202 Accepted` `{ "accepted": true }` as soon as fan-out is accepted. That is **not** delivery proof: subscriber status codes are not propagated. Confirm the request in **each** subscriber’s logs before treating a fan-out test as successful.
+Webhooks use **fan-out**. By default every active subscriber receives a copy. The public caller gets `202 Accepted` `{ "accepted": true }` as soon as fan-out is accepted. That is **not** delivery proof: subscriber status codes are not propagated, and path filters or `--no-webhooks` can skip a replica. Confirm the request in **each** subscriber’s logs before treating a fan-out test as successful.
+
+Webhook remaining-path filters are operator-owned. Empty settings mean accept everything. The dashboard **Deny all webhook fan-out** checkbox (or `PUT /_router/webhook-fanout` `{ "denyAllWebhooks": true }`) skips every subscriber on that route. Path rules (`PUT /_router/webhook-fanout-rules`) skip or only-send a remaining-path prefix, optionally scoped to one `--environment-id`. `--no-webhooks` / `DEV_ROUTER_NO_WEBHOOKS=1` mutes this subscriber only. Either mute skips delivery; the public caller still gets `202` while any subscriber is connected. OAuth reverse-proxy is unchanged. Minted route join tokens cannot mutate route filters.
 
 OAuth callbacks use **correlated single-target routing** and **return the subscriber response** (status, `Location`, body). `Set-Cookie` is not copied onto the Worker host. That is required so authorization-code exchanges and redirects work. One `code` must go only to the subscriber that created its `state`.
 

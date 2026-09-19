@@ -176,7 +176,7 @@ Treat every new cloud environment as unsorted until the operator finishes the ap
 4. If other replicas are already on the same route, the app must bind `state` so this orb owns the authorization code: `POST http://127.0.0.1:8790/oauth-states` or `connection.bindOAuthState()` / `wrapOAuthState()` from the sidecar process.
 5. Store tokens in this environment. The next orb does not inherit them.
 
-Until step 4–5 succeed, do not tell the operator that webhooks are ready. Fan-out to an unauthenticated replica is failed follow-up calls.
+Until step 4–5 succeed, do not tell the operator that webhooks are ready. Fan-out to an unauthenticated replica is failed follow-up calls. Connect with `--no-webhooks` (or `DEV_ROUTER_NO_WEBHOOKS=1`) to keep this replica on the route for OAuth while skipping webhook fan-out until tokens exist.
 
 ## Public target (optional)
 
@@ -236,6 +236,7 @@ await connection.disconnect();
 | `DEV_ROUTER_PORT` / `PORT` / `--port` | Local app port used when constructing a detected public URL (default `3000`) |
 | `DEV_ROUTER_LOCAL_URL` / `--local-url` | Local HTTP origin for reverse-tunnel mode |
 | `DEV_ROUTER_ENVIRONMENT_ID` / `--environment-id` | Stable subscriber identity across reconnects (max 128; `A-Za-z0-9._~:@+-`; no PID) |
+| `DEV_ROUTER_NO_WEBHOOKS` / `--no-webhooks` | This subscriber skips webhook fan-out (`1` / `true` / `yes`); OAuth still proxies |
 | `DEV_ROUTER_CONTROL_PORT` / `--control-port` | Loopback control port (default `8790`; listens immediately) |
 | `DEV_ROUTER_CONTROL_SOCKET` / `--control-socket` | Unix socket instead of TCP |
 | `DEV_ROUTER_CONTROL_TOKEN` / `--control-token` | Optional bearer token for the control server |

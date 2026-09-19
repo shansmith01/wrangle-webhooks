@@ -74,6 +74,7 @@ describe("inbound request log helpers", () => {
     expect(event.path).toBe("/api/hooks/payment");
     expect(event.hasQuery).toBe(true);
     expect(event.routeId).toBe("nomads");
+    expect(event.deliveredSubscriberCount).toBe(0);
     expect(JSON.stringify(event)).not.toContain("secret-customer");
     expect(JSON.stringify(event)).not.toContain("super-secret");
     expect(formatInboundBodyBytes(event.bodyBytes)).toBe("2.0 KB");

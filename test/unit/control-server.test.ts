@@ -12,6 +12,7 @@ function fakeConnection(): Connection {
     forwardToken: "ft_test",
     connectionToken: "ct_test",
     environmentId: "amp-thread-1",
+    acceptWebhooks: true,
     connected: true,
     connectionState: "connected",
     async whenReady() {
@@ -49,6 +50,7 @@ test("control server exposes readiness and binds OAuth state on the current conn
     forwardToken: "ft_test",
     connectionToken: "ct_test",
     environmentId: "amp-thread-1",
+    acceptWebhooks: true,
     connected: true,
     connectionState: "connected",
     whenReady: async () => undefined,

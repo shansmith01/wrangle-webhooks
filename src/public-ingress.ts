@@ -187,11 +187,15 @@ export async function handlePublicIngress(
       status: result.status,
       error: result.kind === "error" ? result.error : null,
       subscriberCount: resolved.subscribers.length,
+      deliveredSubscriberCount: result.kind === "proxy" ? 1 : 0,
       bodyBytes: inboundBodyBytes(request, body)
     });
     return proxyResultToResponse(result);
   }
 
+  const deliveredSubscriberCount = await stub.countWebhookFanoutDeliveries(
+    resolved.remainingPath
+  );
   await recordPublicInboundLog(env, {
     id: requestId,
     method: request.method,
@@ -202,6 +206,7 @@ export async function handlePublicIngress(
     result: "accepted",
     status: 202,
     subscriberCount: resolved.subscribers.length,
+    deliveredSubscriberCount,
     bodyBytes: inboundBodyBytes(request, body)
   });
   ctx.waitUntil(stub.fanOut(payload));

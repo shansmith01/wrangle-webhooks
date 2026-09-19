@@ -28,6 +28,8 @@ beforeEach(async () => {
     await index.removeOAuthCallbackPath(row.routeId, row.remainingPath);
   }
   expect(await index.listAllOAuthCallbackPaths()).toEqual([]);
+  await index.clearWebhookFanout();
+  expect(await index.listAllWebhookFanoutRules()).toEqual([]);
 });
 
 afterEach(() => {
@@ -80,7 +82,8 @@ async function fetchWorker(
 async function register(
   routeId: string,
   targetBaseUrl: string,
-  environmentId?: string
+  environmentId?: string,
+  acceptWebhooks = true
 ): Promise<{ subscriberId: string; connectionToken: string }> {
   const path =
     routeId === ""
@@ -89,10 +92,42 @@ async function register(
   const response = await fetchWorker(path, {
     method: "POST",
     headers: authHeaders({ "Content-Type": "application/json" }),
-    body: JSON.stringify({ targetBaseUrl, ...(environmentId ? { environmentId } : {}) })
+    body: JSON.stringify({
+      targetBaseUrl,
+      ...(environmentId ? { environmentId } : {}),
+      ...(acceptWebhooks ? {} : { acceptWebhooks: false })
+    })
   });
   expect(response.status).toBe(200);
   return (await response.json()) as { subscriberId: string; connectionToken: string };
+}
+
+function webhookFanoutUrl(routeId: string, rules = false): string {
+  const suffix = rules ? "webhook-fanout-rules" : "webhook-fanout";
+  return routeId === ""
+    ? `https://dev-webhooks.example.com/_router/${suffix}`
+    : `https://dev-webhooks.example.com/_router/routes/${routeId}/${suffix}`;
+}
+
+async function putWebhookFanout(routeId: string, denyAllWebhooks: boolean): Promise<void> {
+  const response = await fetchWorker(webhookFanoutUrl(routeId), {
+    method: "PUT",
+    headers: authHeaders({ "Content-Type": "application/json" }),
+    body: JSON.stringify({ denyAllWebhooks })
+  });
+  expect(response.status).toBe(200);
+}
+
+async function putWebhookFanoutRule(
+  routeId: string,
+  rule: { mode: "allow" | "deny"; path: string; environmentId?: string }
+): Promise<void> {
+  const response = await fetchWorker(webhookFanoutUrl(routeId, true), {
+    method: "PUT",
+    headers: authHeaders({ "Content-Type": "application/json" }),
+    body: JSON.stringify(rule)
+  });
+  expect(response.status).toBe(200);
 }
 
 /** Register an exact remaining path for OAuth reverse proxy (operator secret only). */
@@ -276,6 +311,9 @@ describe("dashboard", () => {
     expect(html).toContain("OAuth callback paths");
     expect(html).toContain('id="oauth-callbacks"');
     expect(html).toContain("No OAuth callback paths registered");
+    expect(html).toContain("Webhook fan-out");
+    expect(html).toContain('id="webhook-fanout"');
+    expect(html).toContain("Deny all webhook fan-out");
     expect(html).toContain("Inbound requests");
     expect(html).toContain('id="inbound"');
     expect(html).toContain("Connection history");
@@ -291,6 +329,7 @@ describe("dashboard", () => {
       subscriberCount: 0,
       routes: [],
       oauthCallbackPaths: [],
+      webhookFanout: { settings: [], rules: [] },
       inboundLog: [],
       connectionLog: []
     });
@@ -373,6 +412,7 @@ describe("dashboard", () => {
           targetBaseUrl: string;
           transport: string;
           environmentId: string | null;
+          acceptWebhooks: boolean;
         }>;
       }>;
     };
@@ -388,6 +428,7 @@ describe("dashboard", () => {
     expect(route?.subscribers[0]?.transport).toBe("public");
     expect(route?.subscribers[0]?.targetBaseUrl).toBe("https://dev-dash.example/");
     expect(route?.subscribers[0]?.environmentId).toBe("amp-thread-dashboard");
+    expect(route?.subscribers[0]?.acceptWebhooks).toBe(true);
   });
 
   it("keeps a historical connection audit log after disconnect", async () => {
@@ -766,6 +807,7 @@ describe("public routing", () => {
       status: 202,
       error: null,
       subscriberCount: 1,
+      deliveredSubscriberCount: 1,
       bodyBytes: '{"email":"SHOULD-NOT-LOG@example.com","card":"4242"}'.length
     });
     expect(body.inboundLog[0]?.id).toMatch(/^req_[a-z0-9]+$/i);
@@ -1555,6 +1597,650 @@ describe("stable environment identity", () => {
     });
   });
 });
+
+describe("webhook fan-out filters", () => {
+  it("AC-02 filtered-to-zero still returns 202", async () => {
+    await register("mute-all", "https://dev-mute-all.example");
+    await putWebhookFanout("mute-all", true);
+
+    const response = await fetchWorker(
+      "https://dev-webhooks.example.com/mute-all/api/hooks/payment",
+      { method: "POST", body: "{}" }
+    );
+    expect(response.status).toBe(202);
+    expect(await response.json()).toEqual({ accepted: true });
+    expect(await latestInbound()).toMatchObject({
+      kind: "webhook",
+      result: "accepted",
+      status: 202,
+      subscriberCount: 1,
+      deliveredSubscriberCount: 0
+    });
+  });
+
+  it("AC-03 filters do not keep a route open without subscribers", async () => {
+    await putWebhookFanout("ghost-route", true);
+    await putWebhookFanoutRule("ghost-route", { mode: "allow", path: "/webhooks/mews" });
+
+    const response = await fetchWorker(
+      "https://dev-webhooks.example.com/ghost-route/webhooks/mews",
+      { method: "POST", body: "{}" }
+    );
+    expect(response.status).toBe(404);
+    expect(await response.json()).toEqual({ error: "route_not_found" });
+  });
+
+  it("AC-08 allowlist delivers matching remaining paths only", async () => {
+    await register("allow-mews", "https://dev-allow-mews.example");
+    await putWebhookFanoutRule("allow-mews", { mode: "allow", path: "/webhooks/mews" });
+    fetchMock
+      .get("https://dev-allow-mews.example")
+      .intercept({ path: "/webhooks/mews", method: "POST" })
+      .reply(200, "ok");
+
+    const matched = await fetchWorker(
+      "https://dev-webhooks.example.com/allow-mews/webhooks/mews",
+      { method: "POST", body: "{}" }
+    );
+    expect(matched.status).toBe(202);
+    expect((await latestInbound()).deliveredSubscriberCount).toBe(1);
+
+    const skipped = await fetchWorker(
+      "https://dev-webhooks.example.com/allow-mews/webhooks/stripe",
+      { method: "POST", body: "{}" }
+    );
+    expect(skipped.status).toBe(202);
+    expect(await skipped.json()).toEqual({ accepted: true });
+    expect((await latestInbound()).deliveredSubscriberCount).toBe(0);
+  });
+
+  it("AC-09 denylist skips the matching prefix and delivers others", async () => {
+    await register("deny-stripe", "https://dev-deny-stripe.example");
+    await putWebhookFanoutRule("deny-stripe", { mode: "deny", path: "/webhooks/stripe" });
+    fetchMock
+      .get("https://dev-deny-stripe.example")
+      .intercept({ path: "/webhooks/mews", method: "POST" })
+      .reply(200, "ok");
+
+    const skipped = await fetchWorker(
+      "https://dev-webhooks.example.com/deny-stripe/webhooks/stripe/invoice",
+      { method: "POST", body: "{}" }
+    );
+    expect(skipped.status).toBe(202);
+    expect((await latestInbound()).deliveredSubscriberCount).toBe(0);
+
+    const matched = await fetchWorker(
+      "https://dev-webhooks.example.com/deny-stripe/webhooks/mews",
+      { method: "POST", body: "{}" }
+    );
+    expect(matched.status).toBe(202);
+    expect((await latestInbound()).deliveredSubscriberCount).toBe(1);
+  });
+
+  it("AC-11 scoped allow is opt-in for that environment only", async () => {
+    await register("scoped-allow", "https://dev-env-a.example", "env-a");
+    await register("scoped-allow", "https://dev-env-b.example", "env-b");
+    await putWebhookFanoutRule("scoped-allow", {
+      mode: "allow",
+      path: "/webhooks/mews",
+      environmentId: "env-a"
+    });
+
+    fetchMock
+      .get("https://dev-env-a.example")
+      .intercept({ path: "/webhooks/mews", method: "POST" })
+      .reply(200, "ok");
+    fetchMock
+      .get("https://dev-env-b.example")
+      .intercept({ path: "/webhooks/mews", method: "POST" })
+      .reply(200, "ok");
+
+    const mews = await fetchWorker(
+      "https://dev-webhooks.example.com/scoped-allow/webhooks/mews",
+      { method: "POST", body: "{}" }
+    );
+    expect(mews.status).toBe(202);
+    expect((await latestInbound()).deliveredSubscriberCount).toBe(2);
+
+    fetchMock
+      .get("https://dev-env-b.example")
+      .intercept({ path: "/webhooks/stripe", method: "POST" })
+      .reply(200, "ok");
+
+    const stripe = await fetchWorker(
+      "https://dev-webhooks.example.com/scoped-allow/webhooks/stripe",
+      { method: "POST", body: "{}" }
+    );
+    expect(stripe.status).toBe(202);
+    expect((await latestInbound()).deliveredSubscriberCount).toBe(1);
+  });
+
+  it("AC-12 anonymous subscribers ignore environment-scoped rules", async () => {
+    await register("anon-scope", "https://dev-anon.example");
+    await putWebhookFanoutRule("anon-scope", {
+      mode: "deny",
+      path: "/webhooks/stripe",
+      environmentId: "env-a"
+    });
+    fetchMock
+      .get("https://dev-anon.example")
+      .intercept({ path: "/webhooks/stripe", method: "POST" })
+      .reply(200, "ok");
+
+    const response = await fetchWorker(
+      "https://dev-webhooks.example.com/anon-scope/webhooks/stripe",
+      { method: "POST", body: "{}" }
+    );
+    expect(response.status).toBe(202);
+    expect((await latestInbound()).deliveredSubscriberCount).toBe(1);
+  });
+
+  it("AC-13 rejects a 33rd webhook fan-out rule", async () => {
+    for (let i = 0; i < 32; i += 1) {
+      await putWebhookFanoutRule("rule-cap", { mode: "deny", path: `/webhooks/p${i}` });
+    }
+    const overflow = await fetchWorker(webhookFanoutUrl("rule-cap", true), {
+      method: "PUT",
+      headers: authHeaders({ "Content-Type": "application/json" }),
+      body: JSON.stringify({ mode: "deny", path: "/webhooks/overflow" })
+    });
+    expect(overflow.status).toBe(400);
+    expect(await overflow.json()).toEqual({ error: "webhook_fanout_rule_limit" });
+  });
+
+  it("AC-14 and AC-15 route deny-all skips everyone until unchecked", async () => {
+    await register("deny-toggle", "https://dev-deny-a.example");
+    await register("deny-toggle", "https://dev-deny-b.example");
+    await putWebhookFanoutRule("deny-toggle", { mode: "allow", path: "/api/hooks/payment" });
+    await putWebhookFanout("deny-toggle", true);
+
+    const muted = await fetchWorker(
+      "https://dev-webhooks.example.com/deny-toggle/api/hooks/payment",
+      { method: "POST", body: "{}" }
+    );
+    expect(muted.status).toBe(202);
+    expect((await latestInbound()).deliveredSubscriberCount).toBe(0);
+
+    await putWebhookFanout("deny-toggle", false);
+    fetchMock
+      .get("https://dev-deny-a.example")
+      .intercept({ path: "/api/hooks/payment", method: "POST" })
+      .reply(200, "ok");
+    fetchMock
+      .get("https://dev-deny-b.example")
+      .intercept({ path: "/api/hooks/payment", method: "POST" })
+      .reply(200, "ok");
+
+    const restored = await fetchWorker(
+      "https://dev-webhooks.example.com/deny-toggle/api/hooks/payment",
+      { method: "POST", body: "{}" }
+    );
+    expect(restored.status).toBe(202);
+    expect((await latestInbound()).deliveredSubscriberCount).toBe(2);
+  });
+
+  it("AC-16 settings survive zero subscribers", async () => {
+    const created = await register("persist-mute", "https://dev-persist-mute.example");
+    await putWebhookFanout("persist-mute", true);
+    await putWebhookFanoutRule("persist-mute", { mode: "deny", path: "/webhooks/stripe" });
+
+    const removed = await fetchWorker(
+      `https://dev-webhooks.example.com/_router/routes/persist-mute/subscribers/${created.subscriberId}`,
+      { method: "DELETE", headers: authHeaders() }
+    );
+    expect(removed.status).toBe(204);
+
+    const listed = await fetchWorker(webhookFanoutUrl("persist-mute"), {
+      headers: authHeaders()
+    });
+    expect(listed.status).toBe(200);
+    expect(await listed.json()).toMatchObject({
+      routeId: "persist-mute",
+      denyAllWebhooks: true,
+      rules: [expect.objectContaining({ mode: "deny", remainingPath: "/webhooks/stripe" })]
+    });
+
+    await register("persist-mute", "https://dev-persist-mute-2.example");
+    const response = await fetchWorker(
+      "https://dev-webhooks.example.com/persist-mute/api/hooks/payment",
+      { method: "POST", body: "{}" }
+    );
+    expect(response.status).toBe(202);
+    expect((await latestInbound()).deliveredSubscriberCount).toBe(0);
+  });
+
+  it("AC-17 subscriber acceptWebhooks false skips only that client", async () => {
+    await register("opt-out", "https://dev-opt-a.example", undefined, false);
+    await register("opt-out", "https://dev-opt-b.example");
+    fetchMock
+      .get("https://dev-opt-b.example")
+      .intercept({ path: "/api/hooks/payment", method: "POST" })
+      .reply(200, "ok");
+
+    const response = await fetchWorker(
+      "https://dev-webhooks.example.com/opt-out/api/hooks/payment",
+      { method: "POST", body: "{}" }
+    );
+    expect(response.status).toBe(202);
+    expect((await latestInbound()).deliveredSubscriberCount).toBe(1);
+  });
+
+  it("AC-18 environment reclaim overwrites acceptWebhooks", async () => {
+    const first = await register(
+      "reclaim-hooks",
+      "https://dev-reclaim-a.example",
+      "orb-1",
+      false
+    );
+    const reclaimOn = await fetchWorker(
+      "https://dev-webhooks.example.com/_router/routes/reclaim-hooks/subscribers",
+      {
+        method: "POST",
+        headers: authHeaders({ "Content-Type": "application/json" }),
+        body: JSON.stringify({
+          targetBaseUrl: "https://dev-reclaim-b.example",
+          environmentId: "orb-1",
+          acceptWebhooks: true,
+          connectionToken: first.connectionToken
+        })
+      }
+    );
+    expect(reclaimOn.status).toBe(200);
+    fetchMock
+      .get("https://dev-reclaim-b.example")
+      .intercept({ path: "/api/hooks/payment", method: "POST" })
+      .reply(200, "ok");
+
+    const accepted = await fetchWorker(
+      "https://dev-webhooks.example.com/reclaim-hooks/api/hooks/payment",
+      { method: "POST", body: "{}" }
+    );
+    expect(accepted.status).toBe(202);
+    expect((await latestInbound()).deliveredSubscriberCount).toBe(1);
+
+    const reclaimed = (await reclaimOn.json()) as { connectionToken: string };
+    const reclaimOff = await fetchWorker(
+      "https://dev-webhooks.example.com/_router/routes/reclaim-hooks/subscribers",
+      {
+        method: "POST",
+        headers: authHeaders({ "Content-Type": "application/json" }),
+        body: JSON.stringify({
+          targetBaseUrl: "https://dev-reclaim-c.example",
+          environmentId: "orb-1",
+          acceptWebhooks: false,
+          connectionToken: reclaimed.connectionToken
+        })
+      }
+    );
+    expect(reclaimOff.status).toBe(200);
+    const denied = await fetchWorker(
+      "https://dev-webhooks.example.com/reclaim-hooks/api/hooks/payment",
+      { method: "POST", body: "{}" }
+    );
+    expect(denied.status).toBe(202);
+    expect((await latestInbound()).deliveredSubscriberCount).toBe(0);
+  });
+
+  it("AC-19 heartbeat does not reset acceptWebhooks", async () => {
+    const created = await register(
+      "heartbeat-mute",
+      "https://dev-heartbeat-mute.example",
+      undefined,
+      false
+    );
+    const heartbeat = await fetchWorker(
+      `https://dev-webhooks.example.com/_router/routes/heartbeat-mute/subscribers/${created.subscriberId}/heartbeat`,
+      { method: "POST", headers: authHeaders() }
+    );
+    expect(heartbeat.status).toBe(200);
+
+    const response = await fetchWorker(
+      "https://dev-webhooks.example.com/heartbeat-mute/api/hooks/payment",
+      { method: "POST", body: "{}" }
+    );
+    expect(response.status).toBe(202);
+    expect((await latestInbound()).deliveredSubscriberCount).toBe(0);
+  });
+
+  it("AC-22 deny-all does not block allowlisted OAuth", async () => {
+    await register("oauth-mute", "https://dev-oauth-mute.example");
+    await registerOAuthCallbackPath("oauth-mute", "/oauth/callback");
+    await putWebhookFanout("oauth-mute", true);
+    fetchMock
+      .get("https://dev-oauth-mute.example")
+      .intercept({ path: /\/oauth\/callback/, method: "GET" })
+      .reply(200, "oauth-ok");
+
+    const response = await fetchWorker(
+      "https://dev-webhooks.example.com/oauth-mute/oauth/callback?code=123"
+    );
+    expect(response.status).toBe(200);
+    expect(await response.text()).toBe("oauth-ok");
+  });
+
+  it("AC-23 --no-webhooks subscriber still receives correlated OAuth", async () => {
+    await register("oauth-opt-out", "https://dev-oauth-opt.example", undefined, false);
+    await registerOAuthCallbackPath("oauth-opt-out", "/oauth/callback");
+    fetchMock
+      .get("https://dev-oauth-opt.example")
+      .intercept({ path: /\/oauth\/callback/, method: "GET" })
+      .reply(302, "redirect", { headers: { Location: "/app" } });
+
+    const response = await fetchWorker(
+      "https://dev-webhooks.example.com/oauth-opt-out/oauth/callback?code=123"
+    );
+    expect(response.status).toBe(302);
+    expect(response.headers.get("location")).toBe("/app");
+  });
+
+  it("AC-25 status JSON includes webhookFanout and acceptWebhooks without secrets", async () => {
+    await register("status-hooks", "https://dev-status-hooks.example", "env-status", false);
+    await putWebhookFanout("status-hooks", true);
+    await putWebhookFanoutRule("status-hooks", { mode: "deny", path: "/webhooks/stripe" });
+
+    const status = await fetchWorker("https://dev-webhooks.example.com/dashboard/status", {
+      headers: await dashboardHeaders()
+    });
+    const body = (await status.json()) as {
+      webhookFanout: {
+        settings: Array<{ routeId: string; denyAllWebhooks: boolean }>;
+        rules: Array<{ mode: string; remainingPath: string }>;
+      };
+      routes: Array<{ subscribers: Array<{ acceptWebhooks: boolean }> }>;
+    };
+    expect(body.webhookFanout.settings).toEqual([
+      { routeId: "status-hooks", denyAllWebhooks: true }
+    ]);
+    expect(body.webhookFanout.rules).toEqual([
+      expect.objectContaining({ mode: "deny", remainingPath: "/webhooks/stripe" })
+    ]);
+    expect(body.routes[0]?.subscribers[0]?.acceptWebhooks).toBe(false);
+    const serialized = JSON.stringify(body);
+    expect(serialized).not.toMatch(/"forwardToken"/);
+    expect(serialized).not.toMatch(/"connectionToken"/);
+    expect(serialized).not.toContain(env.DEV_ROUTER_SECRET);
+  });
+
+  it("AC-26 dashboard checkbox persists denyAllWebhooks", async () => {
+    const headers = await dashboardHeaders({
+      "Content-Type": "application/x-www-form-urlencoded"
+    });
+    const on = await fetchWorker("https://dev-webhooks.example.com/dashboard/webhook-fanout", {
+      method: "POST",
+      headers,
+      body: "routeId=dash-mute&denyAllWebhooks=on",
+      redirect: "manual"
+    });
+    expect(on.status).toBe(303);
+
+    const status = await fetchWorker("https://dev-webhooks.example.com/dashboard/status", {
+      headers: await dashboardHeaders()
+    });
+    const body = (await status.json()) as {
+      webhookFanout: { settings: Array<{ routeId: string; denyAllWebhooks: boolean }> };
+    };
+    expect(body.webhookFanout.settings).toContainEqual({
+      routeId: "dash-mute",
+      denyAllWebhooks: true
+    });
+
+    const off = await fetchWorker("https://dev-webhooks.example.com/dashboard/webhook-fanout", {
+      method: "POST",
+      headers: await dashboardHeaders({
+        "Content-Type": "application/x-www-form-urlencoded"
+      }),
+      body: "routeId=dash-mute&denyAllWebhooks=off",
+      redirect: "manual"
+    });
+    expect(off.status).toBe(303);
+    const after = await fetchWorker("https://dev-webhooks.example.com/dashboard/status", {
+      headers: await dashboardHeaders()
+    });
+    const afterBody = (await after.json()) as {
+      webhookFanout: { settings: Array<{ routeId: string; denyAllWebhooks: boolean }> };
+    };
+    expect(afterBody.webhookFanout.settings).toContainEqual({
+      routeId: "dash-mute",
+      denyAllWebhooks: false
+    });
+  });
+
+  it("AC-27 dashboard adds and removes a path rule; invalid path is a no-op", async () => {
+    const headers = await dashboardHeaders({
+      "Content-Type": "application/x-www-form-urlencoded"
+    });
+    const created = await fetchWorker(
+      "https://dev-webhooks.example.com/dashboard/webhook-fanout-rules",
+      {
+        method: "POST",
+        headers,
+        body: "routeId=dash-rules&mode=deny&path=%2Fwebhooks%2Fstripe",
+        redirect: "manual"
+      }
+    );
+    expect(created.status).toBe(303);
+
+    const status = await fetchWorker("https://dev-webhooks.example.com/dashboard/status", {
+      headers: await dashboardHeaders()
+    });
+    const body = (await status.json()) as {
+      webhookFanout: { rules: Array<{ remainingPath: string }> };
+    };
+    expect(body.webhookFanout.rules).toEqual([
+      expect.objectContaining({ remainingPath: "/webhooks/stripe" })
+    ]);
+
+    const invalid = await fetchWorker(
+      "https://dev-webhooks.example.com/dashboard/webhook-fanout-rules",
+      {
+        method: "POST",
+        headers: await dashboardHeaders({
+          "Content-Type": "application/x-www-form-urlencoded"
+        }),
+        body: "routeId=dash-rules&mode=deny&path=%2F",
+        redirect: "manual"
+      }
+    );
+    expect(invalid.status).toBe(303);
+    const afterInvalid = await fetchWorker("https://dev-webhooks.example.com/dashboard/status", {
+      headers: await dashboardHeaders()
+    });
+    const afterInvalidBody = (await afterInvalid.json()) as {
+      webhookFanout: { rules: Array<{ remainingPath: string }> };
+    };
+    expect(afterInvalidBody.webhookFanout.rules).toHaveLength(1);
+
+    const removed = await fetchWorker(
+      "https://dev-webhooks.example.com/dashboard/webhook-fanout-rules/delete",
+      {
+        method: "POST",
+        headers: await dashboardHeaders({
+          "Content-Type": "application/x-www-form-urlencoded"
+        }),
+        body: "routeId=dash-rules&mode=deny&path=%2Fwebhooks%2Fstripe",
+        redirect: "manual"
+      }
+    );
+    expect(removed.status).toBe(303);
+    const empty = await fetchWorker("https://dev-webhooks.example.com/dashboard/status", {
+      headers: await dashboardHeaders()
+    });
+    const emptyBody = (await empty.json()) as { webhookFanout: { rules: unknown[] } };
+    expect(emptyBody.webhookFanout.rules).toEqual([]);
+  });
+
+  it("AC-28 unauthenticated dashboard webhook writes fail", async () => {
+    const response = await fetchWorker(
+      "https://dev-webhooks.example.com/dashboard/webhook-fanout",
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/x-www-form-urlencoded" },
+        body: "routeId=nope&denyAllWebhooks=on"
+      }
+    );
+    expect(response.status).toBe(401);
+    expect(await response.json()).toEqual({ error: "unauthorized" });
+
+    const listed = await fetchWorker(webhookFanoutUrl("nope"), { headers: authHeaders() });
+    expect(await listed.json()).toMatchObject({ denyAllWebhooks: false, rules: [] });
+  });
+
+  it("AC-30 inbound delivered count is zero when a skip rule matches", async () => {
+    await register("inbound-skip", "https://dev-inbound-skip.example");
+    await putWebhookFanoutRule("inbound-skip", { mode: "deny", path: "/api/hooks/payment" });
+
+    const skipped = await fetchWorker(
+      "https://dev-webhooks.example.com/inbound-skip/api/hooks/payment?customer=SHOULD-NOT-LOG",
+      { method: "POST", body: "{}" }
+    );
+    expect(skipped.status).toBe(202);
+    expect(await latestInbound()).toMatchObject({
+      kind: "webhook",
+      result: "accepted",
+      status: 202,
+      path: "/api/hooks/payment",
+      hasQuery: true,
+      subscriberCount: 1,
+      deliveredSubscriberCount: 0
+    });
+
+    fetchMock
+      .get("https://dev-inbound-skip.example")
+      .intercept({ path: "/api/hooks/other", method: "POST" })
+      .reply(200, "ok");
+    const delivered = await fetchWorker(
+      "https://dev-webhooks.example.com/inbound-skip/api/hooks/other",
+      { method: "POST", body: "{}" }
+    );
+    expect(delivered.status).toBe(202);
+    expect((await latestInbound()).deliveredSubscriberCount).toBe(1);
+  });
+
+  it("AC-31 operator secret can CRUD webhook fan-out settings on root and named routes", async () => {
+    const named = await fetchWorker(webhookFanoutUrl("crud-named"), {
+      method: "PUT",
+      headers: authHeaders({ "Content-Type": "application/json" }),
+      body: JSON.stringify({ denyAllWebhooks: true })
+    });
+    expect(named.status).toBe(200);
+    expect(await named.json()).toMatchObject({
+      routeId: "crud-named",
+      denyAllWebhooks: true,
+      rules: []
+    });
+
+    const rule = await fetchWorker(webhookFanoutUrl("crud-named", true), {
+      method: "PUT",
+      headers: authHeaders({ "Content-Type": "application/json" }),
+      body: JSON.stringify({ mode: "allow", path: "/webhooks/mews" })
+    });
+    expect(rule.status).toBe(200);
+    expect(await rule.json()).toMatchObject({
+      routeId: "crud-named",
+      mode: "allow",
+      remainingPath: "/webhooks/mews",
+      environmentId: null
+    });
+
+    const listed = await fetchWorker(webhookFanoutUrl("crud-named"), {
+      headers: authHeaders()
+    });
+    expect(await listed.json()).toMatchObject({
+      denyAllWebhooks: true,
+      rules: [expect.objectContaining({ remainingPath: "/webhooks/mews" })]
+    });
+
+    const removed = await fetchWorker(
+      `${webhookFanoutUrl("crud-named", true)}?mode=allow&path=%2Fwebhooks%2Fmews`,
+      { method: "DELETE", headers: authHeaders() }
+    );
+    expect(removed.status).toBe(204);
+
+    const root = await fetchWorker(webhookFanoutUrl(""), {
+      method: "PUT",
+      headers: authHeaders({ "Content-Type": "application/json" }),
+      body: JSON.stringify({ denyAllWebhooks: true })
+    });
+    expect(root.status).toBe(200);
+    expect(await root.json()).toMatchObject({ routeId: "", denyAllWebhooks: true });
+  });
+
+  it("AC-32 join token cannot mutate webhook fan-out settings", async () => {
+    const routeSecret = await deriveRouteSecret(env.DEV_ROUTER_SECRET, "join-mute");
+    const denied = await fetchWorker(webhookFanoutUrl("join-mute"), {
+      method: "PUT",
+      headers: {
+        Authorization: `Bearer ${routeSecret}`,
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify({ denyAllWebhooks: true })
+    });
+    expect(denied.status).toBe(401);
+
+    const deniedRule = await fetchWorker(webhookFanoutUrl("join-mute", true), {
+      method: "PUT",
+      headers: {
+        Authorization: `Bearer ${routeSecret}`,
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify({ mode: "deny", path: "/webhooks/stripe" })
+    });
+    expect(deniedRule.status).toBe(401);
+  });
+
+  it("AC-33 join token can set own acceptWebhooks", async () => {
+    const routeSecret = await deriveRouteSecret(env.DEV_ROUTER_SECRET, "join-opt");
+    const created = await fetchWorker(
+      "https://dev-webhooks.example.com/_router/routes/join-opt/subscribers",
+      {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${routeSecret}`,
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify({
+          targetBaseUrl: "https://dev-join-opt.example",
+          acceptWebhooks: false
+        })
+      }
+    );
+    expect(created.status).toBe(200);
+
+    const response = await fetchWorker(
+      "https://dev-webhooks.example.com/join-opt/api/hooks/payment",
+      { method: "POST", body: "{}" }
+    );
+    expect(response.status).toBe(202);
+    expect((await latestInbound()).deliveredSubscriberCount).toBe(0);
+  });
+});
+
+async function latestInbound(): Promise<{
+  kind: string;
+  result: string;
+  status: number;
+  path: string;
+  hasQuery: boolean;
+  subscriberCount: number;
+  deliveredSubscriberCount: number;
+}> {
+  const status = await fetchWorker("https://dev-webhooks.example.com/dashboard/status", {
+    headers: await dashboardHeaders()
+  });
+  const body = (await status.json()) as {
+    inboundLog: Array<{
+      kind: string;
+      result: string;
+      status: number;
+      path: string;
+      hasQuery: boolean;
+      subscriberCount: number;
+      deliveredSubscriberCount: number;
+    }>;
+  };
+  expect(body.inboundLog[0]).toBeDefined();
+  return body.inboundLog[0]!;
+}
 
 async function openTunnel(
   routeId: string,

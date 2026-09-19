@@ -26,6 +26,18 @@ import {
   upsertOAuthCallbackPath
 } from "./oauth-callback-path-storage";
 import { durableObjectNameForIndex, isAllowedRouteId, isValidRouteId } from "./route-id";
+import type { WebhookFanoutRule, WebhookFanoutSettings } from "./webhook-path-filter";
+import {
+  deleteWebhookFanoutRule,
+  getWebhookFanoutSettings,
+  listAllWebhookFanoutRules,
+  listAllWebhookFanoutSettings,
+  migrateWebhookFanoutSettings,
+  setWebhookFanoutDenyAll,
+  upsertWebhookFanoutRule,
+  clearWebhookFanoutStorage,
+  type WebhookFanoutRuleWriteError
+} from "./webhook-fanout-settings-storage";
 
 interface RouteRow {
   route_id: string;
@@ -38,7 +50,7 @@ export function routerIndexStub(env: Env): DurableObjectStub<RouterIndex> {
   return env.ROUTER_INDEX.getByName(durableObjectNameForIndex());
 }
 
-/** Router-wide index of active routes, connection audit log, inbound metadata, and OAuth callback allowlist. */
+/** Router-wide index of active routes, connection audit log, inbound metadata, OAuth callback allowlist, and webhook fan-out filters. */
 export class RouterIndex extends DurableObject<Env> {
   constructor(ctx: DurableObjectState, env: Env) {
     super(ctx, env);
@@ -57,6 +69,7 @@ export class RouterIndex extends DurableObject<Env> {
     migrateConnectionLog(this.ctx.storage.sql);
     migrateInboundLog(this.ctx.storage.sql);
     migrateOAuthCallbackPaths(this.ctx.storage.sql);
+    migrateWebhookFanoutSettings(this.ctx.storage.sql);
   }
 
   async addRoute(routeId: string): Promise<void> {
@@ -154,5 +167,69 @@ export class RouterIndex extends DurableObject<Env> {
   /** Remove an allowlisted OAuth callback remaining path for this route. */
   async removeOAuthCallbackPath(routeId: string, remainingPath: string): Promise<boolean> {
     return deleteOAuthCallbackPath(this.ctx.storage.sql, routeId, remainingPath);
+  }
+
+  /** Route deny-all flag and webhook path prefix rules for fan-out. */
+  async getWebhookFanoutSettings(routeId: string): Promise<WebhookFanoutSettings> {
+    return getWebhookFanoutSettings(this.ctx.storage.sql, routeId);
+  }
+
+  /** Persist the dashboard deny-all webhook fan-out checkbox for this route. */
+  async setWebhookFanoutDenyAll(
+    routeId: string,
+    denyAllWebhooks: boolean
+  ): Promise<WebhookFanoutSettings | null> {
+    return setWebhookFanoutDenyAll(this.ctx.storage.sql, routeId, denyAllWebhooks);
+  }
+
+  /** All route deny-all webhook flags, for the dashboard. */
+  async listAllWebhookFanoutSettings(): Promise<
+    Array<{ routeId: string; denyAllWebhooks: boolean }>
+  > {
+    return listAllWebhookFanoutSettings(this.ctx.storage.sql);
+  }
+
+  /** All webhook path prefix rules across routes, for the dashboard. */
+  async listAllWebhookFanoutRules(): Promise<WebhookFanoutRule[]> {
+    return listAllWebhookFanoutRules(this.ctx.storage.sql);
+  }
+
+  /** Register a webhook remaining-path prefix rule (allow or deny). */
+  async addWebhookFanoutRule(
+    routeId: string,
+    mode: string,
+    remainingPath: string,
+    environmentId?: string | null
+  ): Promise<
+    { ok: true; rule: WebhookFanoutRule } | { ok: false; error: WebhookFanoutRuleWriteError }
+  > {
+    return upsertWebhookFanoutRule(
+      this.ctx.storage.sql,
+      routeId,
+      mode,
+      remainingPath,
+      environmentId
+    );
+  }
+
+  /** Remove a webhook remaining-path prefix rule. */
+  async removeWebhookFanoutRule(
+    routeId: string,
+    mode: string,
+    remainingPath: string,
+    environmentId?: string | null
+  ): Promise<boolean> {
+    return deleteWebhookFanoutRule(
+      this.ctx.storage.sql,
+      routeId,
+      mode,
+      remainingPath,
+      environmentId
+    );
+  }
+
+  /** Remove every webhook fan-out setting and path rule. */
+  async clearWebhookFanout(): Promise<void> {
+    clearWebhookFanoutStorage(this.ctx.storage.sql);
   }
 }
